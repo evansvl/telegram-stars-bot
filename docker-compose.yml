@@ -1,0 +1,53 @@
+# Telegram Stars bot stack.
+# NOTE: no reverse proxy here — TLS is terminated by a proxy you run yourself
+# (see README "🌐 Reverse proxy и HTTPS"). The webhook server is published on
+# 127.0.0.1:${WEBHOOK_PORT} so only your local proxy can reach it.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: bot
+      POSTGRES_DB: wata_bot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d wata_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override host parts so the container talks to the compose services.
+      DATABASE_URL: postgresql+asyncpg://bot:bot@postgres:5432/wata_bot
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      # Expose the webhook server ONLY on localhost; the reverse proxy fronts it.
+      - "127.0.0.1:${WEBHOOK_PORT:-8080}:${WEBHOOK_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
