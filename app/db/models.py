@@ -23,7 +23,7 @@ class Base(DeclarativeBase):
     pass
 
 
-class OrderStatusEnum(str, enum.Enum):
+class OrderStatusEnum(enum.StrEnum):
     """Local lifecycle states. Mirrors WATA + a few bot-side states."""
 
     NEW = "New"  # created in DB, order not yet created at WATA
@@ -62,7 +62,9 @@ class Order(Base):
     count: Mapped[int] = mapped_column(nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
-    commission: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
+    commission: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), nullable=False
+    )
     margin: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
 
     status: Mapped[str] = mapped_column(

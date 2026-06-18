@@ -117,7 +117,7 @@ class WataClient:
                         message=_extract_error_message(body),
                         payload=body,
                     )
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, aiohttp.ClientError) as exc:
                 last_exc = exc
                 if attempt < _MAX_RETRIES:
                     await self._sleep_backoff(attempt, None)
@@ -138,7 +138,9 @@ class WataClient:
     @staticmethod
     async def _sleep_backoff(attempt: int, status: int | None) -> None:
         delay = _BACKOFF_BASE**attempt
-        logger.warning("retrying WATA request attempt=%d status=%s delay=%.1fs", attempt, status, delay)
+        logger.warning(
+            "retrying WATA request attempt=%d status=%s delay=%.1fs", attempt, status, delay
+        )
         await asyncio.sleep(delay)
 
     # ── Public API ───────────────────────────────────────────────

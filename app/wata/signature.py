@@ -29,7 +29,8 @@ class SignatureVerifier:
     async def _load_key(self) -> rsa.RSAPublicKey | None:
         """Fetch the PEM/DER public key from WATA. Returns None on failure."""
         try:
-            async with self._session.get(self._url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with self._session.get(self._url, timeout=timeout) as resp:
                 resp.raise_for_status()
                 raw = await resp.read()
         except aiohttp.ClientError as exc:

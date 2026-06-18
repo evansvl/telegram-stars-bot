@@ -13,7 +13,9 @@ src = ["app", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "ASYNC", "RUF"]
-ignore = ["B008"]  # aiogram/pydantic style default-call args
+# B008: aiogram/pydantic style default-call args.
+# RUF001/2/3: ambiguous Unicode — false positives on legitimate Russian (Cyrillic) text.
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -151,7 +151,9 @@ async def on_username(message: Message, state: FSMContext, service: OrderService
     )
 
 
-async def _show_quote(message: Message, state: FSMContext, service: OrderService, count: int) -> None:
+async def _show_quote(
+    message: Message, state: FSMContext, service: OrderService, count: int
+) -> None:
     data = await state.get_data()
     target = data.get("target_username")
     min_price_raw = data.get("min_price")
@@ -288,13 +290,13 @@ async def cmd_stats(message: Message, service: OrderService, settings: Settings)
         return
     stats = await service.stats()
     await message.answer(
-        (
+        
             "<b>📊 Статистика</b>\n\n"
             f"Всего заказов: <b>{stats['total_orders']}</b>\n"
             f"Оплачено: <b>{stats['paid_orders']}</b>\n"
             f"Оборот: <b>{stats['turnover']} ₽</b>\n"
             f"Суммарная маржа: <b>{stats['margin']} ₽</b>"
-        )
+        
     )
 
 
