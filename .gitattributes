@@ -1,0 +1,7 @@
+# Normalize line endings. Shell scripts MUST stay LF so they run on Linux.
+* text=auto eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf
+*.png binary
+*.jpg binary
