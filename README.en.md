@@ -39,6 +39,8 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 | 🧾 | **Order history** | The `/orders` command shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
 | 🤝 | **Referral program** | Referral links: 5% of each invitee's payment, payout via СБП/USDT with admin moderation and proof |
+| 🧩 | **Partner bots** | A partner creates their own bot (Telegram managed bots) inside the bot, sets a markup and earns; all hosted by you (multibot) |
+| 🧪 | **Test mode** | `TEST_MODE=true` — a "paid" button instead of WATA to exercise the referral/partner mechanics |
 | 🌐 | **Two languages** | Russian and English interface, switch with a button |
 | 🪝 | **Webhook mode** | Both Telegram and WATA run over webhooks — one HTTP server behind your reverse proxy |
 | 🐳 | **Docker out of the box** | `docker compose up -d --build` brings up the bot, PostgreSQL and Redis |
@@ -164,9 +166,10 @@ come back in the order-creation response and are stored in the DB as `margin`).
 ## 🌐 Reverse proxy & HTTPS
 
 Inside the container the webhook server listens over **plain HTTP** on
-`127.0.0.1:8080` (port from `WEBHOOK_PORT`) and serves **both** paths from a single
+`127.0.0.1:8080` (port from `WEBHOOK_PORT`) and serves **all** paths from a single
 application: the Telegram webhook (`TELEGRAM_WEBHOOK_PATH`, default `/tg/webhook`),
-the WATA webhook (`WEBHOOK_PATH`, default `/wata/webhook`) and `/health`. So it's
+the WATA webhook (`WEBHOOK_PATH`, default `/wata/webhook`), partner-bot webhooks
+(`/partner/{token}`) and `/health`. So it's
 enough to proxy the whole domain to `127.0.0.1:8080` — separate `location` blocks per
 path aren't needed. You set up TLS termination and public exposure **yourself**,
 outside `docker-compose`. Two options below; in both **replace `bot.example.com` with
