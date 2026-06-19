@@ -21,7 +21,7 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 > solely responsible for the legality of reselling Stars and for taxes. The
 > project is not affiliated with the WATA provider.
 
-### [✨ Features](#-features) · [🧱 Stack](#-stack) · [🚀 Quick start](#-quick-start) · [⚙️ Configuration](#️-configuration) · [🌐 Reverse proxy & HTTPS](#-reverse-proxy--https) · [🪝 Webhooks](#-webhooks-telegram--wata) · [📦 Statuses](#-order-statuses) · [🔁 Updating](#-updating) · [❓ FAQ](#-faq) · [⚠️ Disclaimer](#️-disclaimer) · [📄 License](#-license)
+### [✨ Features](#-features) · [🤖 No server](#-no-server-required) · [🧱 Stack](#-stack) · [🚀 Quick start](#-quick-start) · [🖥️ Server](#️-getting-a-server) · [⚙️ Configuration](#️-configuration) · [🌐 Reverse proxy & HTTPS](#-reverse-proxy--https) · [🪝 Webhooks](#-webhooks-telegram--wata) · [📦 Statuses](#-order-statuses) · [🔁 Updating](#-updating) · [❓ FAQ](#-faq) · [⚠️ Disclaimer](#️-disclaimer) · [📄 License](#-license)
 
 </div>
 
@@ -38,7 +38,8 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
 | 🧾 | **Order history** | The `/orders` command shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
-| 🌐 | **Two languages** | Russian and English interface, switch with `/language` |
+| 🤝 | **Referral program** | Referral links: 5% of each invitee's payment, payout via СБП/USDT with admin moderation and proof |
+| 🌐 | **Two languages** | Russian and English interface, switch with a button |
 | 🪝 | **Webhook mode** | Both Telegram and WATA run over webhooks — one HTTP server behind your reverse proxy |
 | 🐳 | **Docker out of the box** | `docker compose up -d --build` brings up the bot, PostgreSQL and Redis |
 
@@ -51,6 +52,18 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 - **PostgreSQL 16** + **SQLAlchemy 2 (async)** + **Alembic**
 - **Redis** — FSM state storage
 - **Docker** + **docker compose**
+
+---
+
+## 🤖 No server required
+
+Don't want to deploy and maintain a bot yourself? Create your own Stars-reselling
+bot right inside [@nnstorestarsbot](https://t.me/nnstorestarsbot) — **no server
+rental and no WATA merchant account needed**. The bot is created in a couple of
+taps: you set your own markup (up to +50%) and earn on every sale, while all the
+infrastructure, payments and star delivery stay on our side.
+
+This repository is only for those who want to run everything on their own server.
 
 ---
 
@@ -82,6 +95,22 @@ script again.
 > your server. So a **public HTTPS domain is mandatory**: set `WEBHOOK_HOST` in `.env`
 > and put a TLS reverse proxy in front (see below). Without externally reachable HTTPS
 > the bot won't receive Telegram updates and won't start.
+
+---
+
+## 🖥️ Getting a server
+
+The bot needs a **Linux VPS** with Docker and a public domain for webhooks
+(Telegram only accepts webhooks over HTTPS). Any provider works; we use
+**[Aeza](https://aeza.net/?ref=613643)** — fast, hourly-billed servers with data
+centers in Russia and Europe. Signing up via
+[this link](https://aeza.net/?ref=613643) also supports the project 💚
+
+Minimum requirements:
+
+- Ubuntu 22.04+ / Debian 12+
+- 1 vCPU, 1 GB RAM, 10 GB disk
+- ports 80 and 443 open, a domain (A-record) pointing at the server IP
 
 ---
 
