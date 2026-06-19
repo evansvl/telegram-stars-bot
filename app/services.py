@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from app.bot.i18n import DEFAULT_LANG, normalize_lang
 from app.config import Settings
 from app.db.models import Order, OrderStatusEnum
 from app.db.repositories import OrderRepository, UserRepository
@@ -54,10 +55,41 @@ class OrderService:
         self._settings = settings
         self._wata = wata
         self._db = db
+        self._lang_cache: dict[int, str] = {}
 
     @property
     def markup_percent(self) -> float:
         return self._settings.markup_percent
+
+    # ── Language preferences ─────────────────────────────────────
+
+    async def resolve_language(self, tg_id: int, telegram_language_code: str | None) -> str:
+        """Return the user's language: stored choice, else Telegram locale, else default."""
+        cached = self._lang_cache.get(tg_id)
+        if cached is not None:
+            return cached
+        async with self._db.session() as session:
+            stored = await UserRepository(session).get_language(tg_id)
+        lang = stored or normalize_lang(telegram_language_code)
+        self._lang_cache[tg_id] = lang
+        return lang
+
+    async def set_language(self, tg_id: int, language: str) -> None:
+        lang = normalize_lang(language)
+        async with self._db.session() as session:
+            await UserRepository(session).set_language(tg_id, lang)
+        self._lang_cache[tg_id] = lang
+
+    async def get_user_language(self, tg_id: int) -> str:
+        """Best-effort language lookup for out-of-band messages (e.g. webhooks)."""
+        cached = self._lang_cache.get(tg_id)
+        if cached is not None:
+            return cached
+        async with self._db.session() as session:
+            stored = await UserRepository(session).get_language(tg_id)
+        lang = stored or DEFAULT_LANG
+        self._lang_cache[tg_id] = lang
+        return lang
 
     async def get_star_price(self, username: str) -> StarPrice:
         """Validate a Telegram username and return WATA prices (raises WataApiError)."""

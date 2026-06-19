@@ -17,11 +17,26 @@ class UserRepository:
         self._session = session
 
     async def upsert(self, tg_id: int, username: str | None) -> None:
-        """Create the user or refresh their username (idempotent)."""
+        """Create the user or refresh their username (idempotent).
+
+        Does not touch ``language`` so a user's chosen language is preserved.
+        """
         stmt = (
             pg_insert(User)
             .values(tg_id=tg_id, username=username)
             .on_conflict_do_update(index_elements=[User.tg_id], set_={"username": username})
+        )
+        await self._session.execute(stmt)
+
+    async def get_language(self, tg_id: int) -> str | None:
+        return await self._session.scalar(select(User.language).where(User.tg_id == tg_id))
+
+    async def set_language(self, tg_id: int, language: str) -> None:
+        """Persist the user's language, creating the user row if needed."""
+        stmt = (
+            pg_insert(User)
+            .values(tg_id=tg_id, language=language)
+            .on_conflict_do_update(index_elements=[User.tg_id], set_={"language": language})
         )
         await self._session.execute(stmt)
 

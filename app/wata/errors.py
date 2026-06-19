@@ -1,36 +1,34 @@
-"""WATA error types and mapping of API error codes to user-facing messages."""
+"""WATA error types. User-facing text is localized via i18n message keys."""
 
 from __future__ import annotations
 
-# Map documented WATA error codes to friendly Russian messages for end users.
-WATA_ERROR_MESSAGES: dict[str, str] = {
-    "STR_1001": "Переданы неверные данные заказа. Попробуйте ещё раз.",
-    "STR_1002": "Пользователь Telegram с таким @username не найден.",
-    "STR_1003": "Количество звёзд должно быть от 50 до 50 000.",
-    "STR_1004": "Не удалось создать заказ на стороне WATA. Попробуйте позже.",
-    "ORD_1001": "Заказ не найден.",
-    "ORD_1004": "Истёк срок оплаты заказа. Создайте новый заказ.",
-    "PL_1003": "Ссылка на оплату недоступна или уже оплачена.",
+# Map documented WATA error codes to i18n message keys (see app.bot.i18n).
+WATA_ERROR_KEYS: dict[str, str] = {
+    "STR_1001": "err_invalid_data",
+    "STR_1002": "err_user_not_found",
+    "STR_1003": "err_count_range",
+    "STR_1004": "err_create_failed",
+    "ORD_1001": "err_order_not_found",
+    "ORD_1004": "err_payment_expired",
+    "PL_1003": "err_link_unavailable",
 }
 
-DEFAULT_USER_MESSAGE = "Произошла ошибка при обращении к платёжному сервису. Попробуйте позже."
+DEFAULT_MESSAGE_KEY = "err_generic"
 
 
 class WataError(Exception):
     """Base class for all WATA client errors."""
 
-    def user_message(self) -> str:
-        return DEFAULT_USER_MESSAGE
+    def message_key(self) -> str:
+        """i18n key for a user-facing message (resolved by the bot layer)."""
+        return DEFAULT_MESSAGE_KEY
 
 
 class WataNetworkError(WataError):
     """Network/timeout failure talking to the WATA API."""
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-
-    def user_message(self) -> str:
-        return "Платёжный сервис временно недоступен. Попробуйте через минуту."
+    def message_key(self) -> str:
+        return "err_network"
 
 
 class WataApiError(WataError):
@@ -49,11 +47,11 @@ class WataApiError(WataError):
         self.payload = payload
         super().__init__(f"WATA API error status={status} code={code} message={message!r}")
 
-    def user_message(self) -> str:
-        if self.code and self.code in WATA_ERROR_MESSAGES:
-            return WATA_ERROR_MESSAGES[self.code]
+    def message_key(self) -> str:
+        if self.code and self.code in WATA_ERROR_KEYS:
+            return WATA_ERROR_KEYS[self.code]
         if self.status == 401:
-            return "Ошибка авторизации платёжного сервиса (проверьте WATA_TOKEN)."
+            return "err_auth"
         if self.status == 429:
-            return "Слишком много запросов к платёжному сервису. Подождите немного."
-        return DEFAULT_USER_MESSAGE
+            return "err_rate_limit"
+        return DEFAULT_MESSAGE_KEY

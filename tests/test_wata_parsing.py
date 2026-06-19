@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.bot.i18n import SUPPORTED_LANGS, TEXTS
 from app.wata.client import _extract_error_code, _extract_error_message
-from app.wata.errors import WataApiError
+from app.wata.errors import WataApiError, WataNetworkError
 from app.wata.models import CreateOrderResult, OrderStatus, StarPrice
 
 
@@ -44,10 +45,18 @@ def test_extract_error_message() -> None:
     assert _extract_error_message({"errorDescription": "nope"}) == "nope"
 
 
-def test_user_message_mapping() -> None:
-    err = WataApiError(status=400, code="STR_1002")
-    assert "не найден" in err.user_message()
-    auth = WataApiError(status=401)
-    assert "WATA_TOKEN" in auth.user_message()
-    rate = WataApiError(status=429)
-    assert "Слишком много" in rate.user_message()
+def test_message_key_mapping() -> None:
+    assert WataApiError(status=400, code="STR_1002").message_key() == "err_user_not_found"
+    assert WataApiError(status=400, code="ORD_1004").message_key() == "err_payment_expired"
+    assert WataApiError(status=401).message_key() == "err_auth"
+    assert WataApiError(status=429).message_key() == "err_rate_limit"
+    assert WataApiError(status=500).message_key() == "err_generic"
+    assert WataNetworkError().message_key() == "err_network"
+
+
+def test_i18n_completeness() -> None:
+    """Every text key must have a translation for every supported language."""
+    for key, translations in TEXTS.items():
+        for lang in SUPPORTED_LANGS:
+            assert lang in translations, f"missing {lang!r} translation for {key!r}"
+            assert translations[lang], f"empty {lang!r} translation for {key!r}"
