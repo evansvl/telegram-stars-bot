@@ -6,16 +6,16 @@ import logging
 import sys
 
 
-class KeyValueFormatter(logging.Formatter):
-    """Compact, grep-friendly structured log lines."""
+class ReadableFormatter(logging.Formatter):
+    """Human-readable, aligned log lines for `docker compose logs`.
+
+    Example: ``2026-06-18 23:30:00 INFO     app.main: telegram webhook set ...``
+    Structured extras (via ``log_extra``) are appended as ``key=value``.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
-        base = (
-            f"ts={self.formatTime(record, '%Y-%m-%dT%H:%M:%S%z')} "
-            f"level={record.levelname} "
-            f"logger={record.name} "
-            f"msg={record.getMessage()!r}"
-        )
+        ts = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        base = f"{ts} {record.levelname:<8} {record.name}: {record.getMessage()}"
         extras = getattr(record, "extra_fields", None)
         if extras:
             base += " " + " ".join(f"{k}={v!r}" for k, v in extras.items())
@@ -27,7 +27,7 @@ class KeyValueFormatter(logging.Formatter):
 def setup_logging(level: str = "INFO") -> None:
     """Configure root logging once at process start."""
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(KeyValueFormatter())
+    handler.setFormatter(ReadableFormatter())
 
     root = logging.getLogger()
     root.handlers.clear()

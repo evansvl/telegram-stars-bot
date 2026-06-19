@@ -14,6 +14,7 @@ from typing import Any
 from aiogram import Bot
 from aiohttp import web
 
+from app.bot.i18n import t
 from app.config import Settings
 from app.db.models import OrderStatusEnum
 from app.services import OrderService
@@ -21,12 +22,12 @@ from app.wata.signature import SignatureVerifier
 
 logger = logging.getLogger(__name__)
 
-# User-facing notifications keyed by terminal order status.
-_BUYER_MESSAGES = {
-    OrderStatusEnum.PAID.value: "✅ Оплата получена! Звёзды отправляются ⭐",
-    OrderStatusEnum.SUCCESS.value: "⭐ Готово! Звёзды отправлены получателю.",
-    OrderStatusEnum.REFUNDED.value: "↩️ Заказ не подтверждён, средства возвращены.",
-    OrderStatusEnum.FAIL.value: "❌ Не удалось исполнить заказ. Попробуйте снова.",
+# i18n keys for buyer notifications, keyed by terminal order status.
+_NOTIFY_KEYS = {
+    OrderStatusEnum.PAID.value: "notify_Paid",
+    OrderStatusEnum.SUCCESS.value: "notify_Success",
+    OrderStatusEnum.REFUNDED.value: "notify_Refunded",
+    OrderStatusEnum.FAIL.value: "notify_Fail",
 }
 
 
@@ -83,10 +84,11 @@ async def _handle_webhook(request: web.Request) -> web.Response:
         logger.warning("webhook for unknown order order_id=%s", order_id)
         return web.Response(status=200, text="ok")
 
-    message = _BUYER_MESSAGES.get(order.status)
-    if message:
+    notify_key = _NOTIFY_KEYS.get(order.status)
+    if notify_key:
+        lang = await service.get_user_language(order.buyer_tg_id)
         try:
-            await bot.send_message(order.buyer_tg_id, message)
+            await bot.send_message(order.buyer_tg_id, t(notify_key, lang))
         except Exception:
             logger.exception("failed to notify buyer tg_id=%s", order.buyer_tg_id)
 

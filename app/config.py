@@ -39,11 +39,19 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://bot:bot@postgres:5432/wata_bot"
     redis_url: str = "redis://redis:6379/0"
 
-    # Webhook (HTTP behind a user-managed reverse proxy)
+    # Webhook server (HTTP behind a user-managed reverse proxy with TLS).
+    # The same server serves both the Telegram and the WATA webhooks.
     webhook_host: str = ""
     webhook_port: int = 8080
+
+    # WATA payment notifications.
     webhook_path: str = "/wata/webhook"
     webhook_secret: str = ""
+
+    # Telegram updates (aiogram webhook). secret_token is sent by Telegram in the
+    # X-Telegram-Bot-Api-Secret-Token header and verified by aiogram.
+    telegram_webhook_path: str = "/tg/webhook"
+    telegram_webhook_secret: str = ""
 
     log_level: str = "INFO"
 
@@ -63,10 +71,18 @@ class Settings(BaseSettings):
         return value
 
     @property
+    def public_base_url(self) -> str:
+        return f"https://{self.webhook_host.rstrip('/')}"
+
+    @property
     def webhook_url(self) -> str:
         """Full public URL that must be registered in the WATA dashboard."""
-        host = self.webhook_host.rstrip("/")
-        return f"https://{host}{self.webhook_path}"
+        return f"{self.public_base_url}{self.webhook_path}"
+
+    @property
+    def telegram_webhook_url(self) -> str:
+        """Full public URL Telegram will POST updates to."""
+        return f"{self.public_base_url}{self.telegram_webhook_path}"
 
     def is_admin(self, tg_id: int) -> bool:
         return tg_id in self.admin_ids
