@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -32,8 +34,9 @@ class Settings(BaseSettings):
     markup_percent: float = 20.0
     auto_confirm: bool = True
 
-    # Access control
-    admin_ids: list[int] = Field(default_factory=list)
+    # Access control. NoDecode keeps pydantic-settings from JSON-parsing the env
+    # value, so the comma-separated string reaches the validator below intact.
+    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
 
     # Infrastructure
     database_url: str = "postgresql+asyncpg://bot:bot@postgres:5432/wata_bot"
