@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -34,9 +32,9 @@ class Settings(BaseSettings):
     markup_percent: float = 20.0
     auto_confirm: bool = True
 
-    # Access control. NoDecode keeps pydantic-settings from JSON-parsing the env
-    # value, so the comma-separated string reaches the validator below intact.
-    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
+    # Access control. Read as a plain string (a simple type pydantic-settings never
+    # JSON-decodes) and expose the parsed list via the admin_ids property below.
+    admin_ids_raw: str = Field(default="", validation_alias="admin_ids")
 
     # Infrastructure
     database_url: str = "postgresql+asyncpg://bot:bot@postgres:5432/wata_bot"
@@ -58,20 +56,17 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    @field_validator("admin_ids", mode="before")
-    @classmethod
-    def _parse_admin_ids(cls, value: object) -> object:
-        """Accept a comma-separated string of admin IDs from the environment."""
-        if isinstance(value, str):
-            return [int(part) for part in value.replace(" ", "").split(",") if part]
-        return value
-
     @field_validator("markup_percent")
     @classmethod
     def _validate_markup(cls, value: float) -> float:
         if value < 0:
             raise ValueError("MARKUP_PERCENT must be non-negative")
         return value
+
+    @property
+    def admin_ids(self) -> list[int]:
+        """Admin Telegram IDs parsed from the comma-separated ADMIN_IDS env var."""
+        return [int(part) for part in self.admin_ids_raw.replace(" ", "").split(",") if part]
 
     @property
     def public_base_url(self) -> str:
