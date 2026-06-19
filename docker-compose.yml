@@ -33,6 +33,9 @@ services:
 
   bot:
     build: .
+    # Unique, stable name so an external reverse proxy can target it without
+    # colliding with other projects' generic "bot" service on shared networks.
+    container_name: stars_bot
     restart: unless-stopped
     env_file: .env
     environment:
@@ -42,6 +45,11 @@ services:
     ports:
       # Expose the webhook server ONLY on localhost; the reverse proxy fronts it.
       - "127.0.0.1:${WEBHOOK_PORT:-8080}:${WEBHOOK_PORT:-8080}"
+    networks:
+      default:
+        # Reachable as "stars_bot" from any container joined to this network.
+        aliases:
+          - stars_bot
     depends_on:
       postgres:
         condition: service_healthy
