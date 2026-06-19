@@ -10,9 +10,17 @@ from typing import Any
 
 from app.bot.i18n import DEFAULT_LANG, normalize_lang
 from app.config import Settings
-from app.db.models import Order, OrderStatusEnum, Withdrawal, WithdrawalMethod, WithdrawalStatus
+from app.db.models import (
+    Order,
+    OrderStatusEnum,
+    PartnerBot,
+    Withdrawal,
+    WithdrawalMethod,
+    WithdrawalStatus,
+)
 from app.db.repositories import (
     OrderRepository,
+    PartnerBotRepository,
     ReferralRepository,
     UserRepository,
     WithdrawalRepository,
@@ -115,6 +123,8 @@ class OrderService:
         target_username: str,
         count: int,
         amount: Decimal,
+        partner_owner_tg_id: int | None = None,
+        partner_earning: Decimal = Decimal("0"),
     ) -> CreatedOrder:
         """Create a WATA order and persist it. Returns the payment link."""
         order_id = uuid.uuid4().hex
@@ -130,6 +140,8 @@ class OrderService:
                 count=count,
                 amount=amount,
                 status=OrderStatusEnum.NEW.value,
+                partner_owner_tg_id=partner_owner_tg_id,
+                partner_earning=partner_earning,
             )
 
         # Test mode: no WATA call, no payment link. The order waits for a simulated
@@ -303,12 +315,33 @@ class ReferralService:
             return await UserRepository(session).set_referrer(new_tg_id, referrer_tg_id)
 
     async def credit_for_order(self, order: Order) -> tuple[int, Decimal] | None:
-        """Credit the buyer's referrer 5% of a paid order. Idempotent per order.
+        """Credit earnings for a paid order. Idempotent per order.
 
-        Returns (referrer_tg_id, amount) only when a new credit was recorded.
+        Partner-bot orders pay the partner their pre-computed markup; otherwise the
+        buyer's referrer earns 5%. Returns (earner_tg_id, amount) on a new credit.
         """
         if order.status not in _CREDIT_STATUSES:
             return None
+        # Partner-bot order: the partner keeps their markup (the 5% referral does
+        # not apply here).
+        if order.partner_owner_tg_id and order.partner_earning > 0:
+            async with self._db.session() as session:
+                inserted = await ReferralRepository(session).credit(
+                    referrer_tg_id=order.partner_owner_tg_id,
+                    referred_tg_id=order.buyer_tg_id,
+                    order_id=order.order_id,
+                    amount=order.partner_earning,
+                )
+            if not inserted:
+                return None
+            logger.info(
+                "partner credited owner=%s order_id=%s amount=%s",
+                order.partner_owner_tg_id,
+                order.order_id,
+                order.partner_earning,
+            )
+            return order.partner_owner_tg_id, order.partner_earning
+
         percent = Decimal(str(self._settings.referral_percent))
         amount = (order.amount * percent / Decimal("100")).quantize(
             Decimal("0.01"), rounding=ROUND_DOWN
@@ -401,3 +434,72 @@ class ReferralService:
                 resolved_by=admin_id,
                 reject_reason=reason,
             )
+
+
+# ── Partner bots (managed bots hosted by us) ─────────────────────
+
+
+class PartnerService:
+    """Manages partner-owned bots and their markup-based pricing.
+
+    Partner bots reuse the buy flow and the referral wallet: a partner's markup
+    (added on top of the operator markup, total capped at WATA's +50%) is paid to
+    the partner's balance through the same withdrawal system.
+    """
+
+    def __init__(self, settings: Settings, db: Database) -> None:
+        self._settings = settings
+        self._db = db
+        self._markup_cache: dict[int, Decimal] = {}
+
+    @property
+    def max_partner_markup(self) -> Decimal:
+        """Room left under WATA's +50% cap after the operator's own markup."""
+        room = Decimal("50") - Decimal(str(self._settings.markup_percent))
+        return room if room > Decimal("0") else Decimal("0")
+
+    async def create_bot(
+        self, *, owner_tg_id: int, bot_id: int, username: str | None, token: str
+    ) -> PartnerBot:
+        async with self._db.session() as session:
+            bot = await PartnerBotRepository(session).create(
+                owner_tg_id=owner_tg_id,
+                bot_id=bot_id,
+                username=username,
+                token=token,
+                markup_percent=Decimal("0"),
+            )
+        self._markup_cache[bot_id] = Decimal("0")
+        return bot
+
+    async def list_for_owner(self, owner_tg_id: int) -> list[PartnerBot]:
+        async with self._db.session() as session:
+            return await PartnerBotRepository(session).list_for_owner(owner_tg_id)
+
+    async def list_active(self) -> list[PartnerBot]:
+        async with self._db.session() as session:
+            return await PartnerBotRepository(session).list_active()
+
+    async def set_markup(self, bot_id: int, markup_percent: Decimal) -> PartnerBot | None:
+        clamped = max(Decimal("0"), min(markup_percent, self.max_partner_markup))
+        async with self._db.session() as session:
+            bot = await PartnerBotRepository(session).set_markup(bot_id, clamped)
+        if bot is not None:
+            self._markup_cache[bot_id] = clamped
+        return bot
+
+    async def partner_markup(self, bot_id: int) -> Decimal:
+        """Partner markup for a bot id; 0 for the main bot or unknown bots."""
+        cached = self._markup_cache.get(bot_id)
+        if cached is not None:
+            return cached
+        async with self._db.session() as session:
+            bot = await PartnerBotRepository(session).get_by_bot_id(bot_id)
+        markup = bot.markup_percent if bot else Decimal("0")
+        self._markup_cache[bot_id] = markup
+        return markup
+
+    async def owner_of(self, bot_id: int) -> int | None:
+        async with self._db.session() as session:
+            bot = await PartnerBotRepository(session).get_by_bot_id(bot_id)
+        return bot.owner_tg_id if bot else None

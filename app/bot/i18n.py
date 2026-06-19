@@ -379,6 +379,71 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "Пруф по выводу #{id}",
         "en": "Proof for withdrawal #{id}",
     },
+    # ── Partner bots ──────────────────────────────────────────
+    "partner_overview": {
+        "ru": (
+            "🧩 <b>Партнёрам: свой бот</b>\n\n"
+            "Создайте собственного бота для продажи звёзд — он работает на нашей "
+            "инфраструктуре, платежи и выдача звёзд на нашей стороне.\n\n"
+            "Вы задаёте свою наценку (до <b>{max}%</b>) поверх базовой цены и "
+            "получаете её с каждой продажи. Доход копится на общий баланс и выводится "
+            "в разделе «Партнёрка».\n\n"
+            "Ваших ботов: <b>{count}</b>"
+        ),
+        "en": (
+            "🧩 <b>Partners: your own bot</b>\n\n"
+            "Create your own Stars-selling bot — it runs on our infrastructure, with "
+            "payments and delivery on our side.\n\n"
+            "You set your own markup (up to <b>{max}%</b>) on top of the base price and "
+            "earn it on every sale. Earnings accrue to your shared balance and are paid "
+            "out in the “Referrals” section.\n\n"
+            "Your bots: <b>{count}</b>"
+        ),
+    },
+    "partner_create_prompt": {
+        "ru": (
+            "Нажмите кнопку ниже и подтвердите создание бота в Telegram. "
+            "Имя и @username бот предложит сам — токен подключится автоматически."
+        ),
+        "en": (
+            "Tap the button below and confirm creating the bot in Telegram. "
+            "It will suggest a name and @username — the token connects automatically."
+        ),
+    },
+    "partner_bot_created": {
+        "ru": (
+            "✅ Бот <b>@{username}</b> создан и запущен!\n\n"
+            "Откройте его и нажмите /start. Не забудьте задать наценку в «Мои боты»."
+        ),
+        "en": (
+            "✅ Bot <b>@{username}</b> created and running!\n\n"
+            "Open it and tap /start. Don't forget to set your markup in “My bots”."
+        ),
+    },
+    "partner_create_failed": {
+        "ru": "Не удалось подключить бота. Попробуйте ещё раз.",
+        "en": "Could not connect the bot. Please try again.",
+    },
+    "partner_bots_empty": {
+        "ru": "У вас пока нет ботов.",
+        "en": "You don't have any bots yet.",
+    },
+    "partner_bots_header": {
+        "ru": "<b>🧩 Ваши боты</b>\nВыберите бота, чтобы задать наценку:",
+        "en": "<b>🧩 Your bots</b>\nPick a bot to set its markup:",
+    },
+    "partner_ask_markup": {
+        "ru": "Введите вашу наценку в % (от 0 до {max}):",
+        "en": "Enter your markup in % (from 0 to {max}):",
+    },
+    "partner_markup_invalid": {
+        "ru": "Нужно число от 0 до {max}. Попробуйте ещё раз:",
+        "en": "Enter a number from 0 to {max}. Try again:",
+    },
+    "partner_markup_set": {
+        "ru": "✅ Наценка для <b>@{username}</b>: <b>{markup}%</b>",
+        "en": "✅ Markup for <b>@{username}</b>: <b>{markup}%</b>",
+    },
     # ── Status labels ─────────────────────────────────────────
     "status_New": {"ru": "🆕 создаётся", "en": "🆕 creating"},
     "status_Pending": {"ru": "⏳ ожидает оплаты", "en": "⏳ awaiting payment"},
@@ -453,6 +518,14 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_help": {"ru": "❓ Помощь", "en": "❓ Help"},
     "btn_language": {"ru": "🌐 Язык / Language", "en": "🌐 Language / Язык"},
     "btn_referral": {"ru": "🤝 Партнёрка", "en": "🤝 Referrals"},
+    "btn_partner": {"ru": "🧩 Свой бот", "en": "🧩 Your own bot"},
+    "btn_partner_create": {"ru": "➕ Создать бота", "en": "➕ Create a bot"},
+    "btn_partner_bots": {"ru": "⚙️ Мои боты", "en": "⚙️ My bots"},
+    "btn_create_managed": {"ru": "➕ Создать бота", "en": "➕ Create a bot"},
+    "btn_partner_set_markup": {
+        "ru": "@{username} — задать наценку",
+        "en": "@{username} — set markup",
+    },
     "btn_withdraw": {"ru": "💸 Вывести средства", "en": "💸 Withdraw"},
     "btn_withdrawals": {"ru": "📜 Мои выводы", "en": "📜 My withdrawals"},
     "btn_method_sbp": {"ru": "🏦 СБП", "en": "🏦 СБП"},

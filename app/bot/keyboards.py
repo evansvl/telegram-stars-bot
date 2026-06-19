@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    KeyboardButtonRequestManagedBot,
+    ReplyKeyboardMarkup,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.i18n import LANGUAGE_NAMES, SUPPORTED_LANGS, t
@@ -16,6 +22,7 @@ def main_menu(lang: str) -> InlineKeyboardMarkup:
     builder.button(text=t("btn_buy", lang), callback_data="buy:start")
     builder.button(text=t("btn_orders", lang), callback_data="orders:list")
     builder.button(text=t("btn_referral", lang), callback_data="ref:show")
+    builder.button(text=t("btn_partner", lang), callback_data="partner:show")
     builder.button(text=t("btn_help", lang), callback_data="help:show")
     builder.button(text=t("btn_language", lang), callback_data="lang:choose")
     settings = get_settings()
@@ -106,6 +113,42 @@ def admin_withdrawal_actions(withdrawal_id: int, lang: str) -> InlineKeyboardMar
     builder.button(text=t("btn_approve", lang), callback_data=f"wda:approve:{withdrawal_id}")
     builder.button(text=t("btn_reject", lang), callback_data=f"wda:reject:{withdrawal_id}")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def partner_menu(lang: str, *, has_bots: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_partner_create", lang), callback_data="partner:create")
+    if has_bots:
+        builder.button(text=t("btn_partner_bots", lang), callback_data="partner:list")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def partner_create_kb(lang: str) -> ReplyKeyboardMarkup:
+    """Reply keyboard whose button asks Telegram to create a managed bot."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text=t("btn_create_managed", lang),
+                    request_managed_bot=KeyboardButtonRequestManagedBot(request_id=1),
+                )
+            ]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def partner_bots_kb(lang: str, bots: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for b in bots:
+        label = t("btn_partner_set_markup", lang, username=b.username or b.bot_id)
+        builder.button(text=label, callback_data=f"partner:setmarkup:{b.bot_id}")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
     return builder.as_markup()
 
 

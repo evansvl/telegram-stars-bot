@@ -14,18 +14,21 @@ import re
 from contextlib import suppress
 from decimal import Decimal, InvalidOperation
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.methods import GetManagedBotToken
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 
 from app.bot import keyboards
 from app.bot.i18n import normalize_lang, status_label, t, withdrawal_status_label
-from app.bot.states import AdminWithdrawStates, BuyStates, WithdrawStates
+from app.bot.states import AdminWithdrawStates, BuyStates, PartnerStates, WithdrawStates
 from app.config import Settings
 from app.pricing import MAX_STARS, MIN_STARS, compute_amount, is_valid_count
-from app.services import OrderService, ReferralService, WithdrawalError
+from app.services import OrderService, PartnerService, ReferralService, WithdrawalError
 from app.wata.errors import WataError
 
 logger = logging.getLogger(__name__)
@@ -163,6 +166,7 @@ async def _show_quote(
     event: Message | CallbackQuery,
     state: FSMContext,
     service: OrderService,
+    partner: PartnerService,
     count: int,
     lang: str,
 ) -> None:
@@ -174,8 +178,28 @@ async def _show_quote(
         await state.clear()
         return
 
-    quote = compute_amount(Decimal(str(min_price_raw)), count, service.markup_percent)
-    await state.update_data(count=count, amount=str(quote.amount))
+    # On a partner bot, add the partner markup on top of the operator markup
+    # (compute_amount clamps the total to WATA's +50% cap). The partner earns the
+    # difference over what the operator alone would charge.
+    min_price = Decimal(str(min_price_raw))
+    operator = service.markup_percent
+    bot_id = event.bot.id if event.bot else 0
+    partner_markup = await partner.partner_markup(bot_id)
+    total_markup = operator + float(partner_markup)
+
+    quote = compute_amount(min_price, count, total_markup)
+    operator_amount = compute_amount(min_price, count, operator).amount
+    partner_earning = quote.amount - operator_amount
+    if partner_earning < 0:
+        partner_earning = Decimal("0")
+    partner_owner = await partner.owner_of(bot_id) if partner_earning > 0 else None
+
+    await state.update_data(
+        count=count,
+        amount=str(quote.amount),
+        partner_owner=partner_owner,
+        partner_earning=str(partner_earning),
+    )
     await state.set_state(BuyStates.confirm_payment)
     await _render(
         event,
@@ -186,7 +210,11 @@ async def _show_quote(
 
 @router.callback_query(BuyStates.waiting_count, F.data.startswith("count:"))
 async def cb_count(
-    call: CallbackQuery, state: FSMContext, service: OrderService, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    partner: PartnerService,
+    lang: str,
 ) -> None:
     value = (call.data or "").split(":", 1)[1]
     if value == "custom":
@@ -198,13 +226,17 @@ async def cb_count(
         await call.answer()
         return
 
-    await _show_quote(call, state, service, int(value), lang)
+    await _show_quote(call, state, service, partner, int(value), lang)
     await call.answer()
 
 
 @router.message(BuyStates.waiting_custom_count, F.text)
 async def on_custom_count(
-    message: Message, state: FSMContext, service: OrderService, lang: str
+    message: Message,
+    state: FSMContext,
+    service: OrderService,
+    partner: PartnerService,
+    lang: str,
 ) -> None:
     raw = (message.text or "").strip().replace(" ", "")
     if not raw.isdigit():
@@ -217,7 +249,7 @@ async def on_custom_count(
             reply_markup=keyboards.cancel_button(lang),
         )
         return
-    await _show_quote(message, state, service, count, lang)
+    await _show_quote(message, state, service, partner, count, lang)
 
 
 @router.callback_query(BuyStates.confirm_payment, F.data == "pay:confirm")
@@ -233,6 +265,8 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
 
     await call.answer(t("creating_order", lang))
     user = call.from_user
+    partner_owner = data.get("partner_owner")
+    partner_earning = Decimal(str(data.get("partner_earning", "0")))
     try:
         created = await service.create_order(
             buyer_tg_id=user.id,
@@ -240,6 +274,8 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
             target_username=str(target),
             count=int(count),
             amount=Decimal(str(amount)),
+            partner_owner_tg_id=int(partner_owner) if partner_owner else None,
+            partner_earning=partner_earning,
         )
     except WataError as exc:
         await _render(call, f"⚠️ {t(exc.message_key(), lang)}", keyboards.retry_buy(lang))
@@ -336,6 +372,137 @@ async def cb_referral(call: CallbackQuery, referral: ReferralService, lang: str)
     can_withdraw = ov.available > 0 and not ov.has_pending
     await _render(call, text, keyboards.referral_menu(lang, can_withdraw=can_withdraw))
     await call.answer()
+
+
+# ── Partner bots (managed bots) ──────────────────────────────
+
+
+async def _register_partner_webhook(token: str, settings: Settings) -> None:
+    """Point a freshly created managed bot's webhook at our multibot endpoint."""
+    child = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        url = f"{settings.public_base_url}/partner/{token}"
+        await child.set_webhook(
+            url=url, allowed_updates=["message", "callback_query"], drop_pending_updates=True
+        )
+    finally:
+        await child.session.close()
+
+
+@router.callback_query(F.data == "partner:show")
+async def cb_partner_show(call: CallbackQuery, partner: PartnerService, lang: str) -> None:
+    if not call.from_user:
+        await call.answer()
+        return
+    bots = await partner.list_for_owner(call.from_user.id)
+    text = t("partner_overview", lang, max=partner.max_partner_markup, count=len(bots))
+    await _render(call, text, keyboards.partner_menu(lang, has_bots=bool(bots)))
+    await call.answer()
+
+
+@router.callback_query(F.data == "partner:create")
+async def cb_partner_create(call: CallbackQuery, lang: str) -> None:
+    if isinstance(call.message, Message):
+        await call.message.answer(
+            t("partner_create_prompt", lang), reply_markup=keyboards.partner_create_kb(lang)
+        )
+    await call.answer()
+
+
+@router.message(F.managed_bot_created)
+async def on_managed_bot_created(
+    message: Message, partner: PartnerService, settings: Settings, lang: str
+) -> None:
+    created = message.managed_bot_created
+    if created is None or not message.from_user:
+        return
+    bot_user = created.bot_user
+    try:
+        token = await message.bot(GetManagedBotToken(user_id=bot_user.id))
+    except Exception:
+        logger.exception("failed to get managed bot token for %s", bot_user.id)
+        await message.answer(t("partner_create_failed", lang), reply_markup=ReplyKeyboardRemove())
+        return
+    await partner.create_bot(
+        owner_tg_id=message.from_user.id,
+        bot_id=bot_user.id,
+        username=bot_user.username,
+        token=token,
+    )
+    try:
+        await _register_partner_webhook(token, settings)
+    except Exception:
+        logger.exception("failed to register partner webhook for %s", bot_user.id)
+    await message.answer(
+        t("partner_bot_created", lang, username=bot_user.username or bot_user.id),
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.callback_query(F.data == "partner:list")
+async def cb_partner_list(call: CallbackQuery, partner: PartnerService, lang: str) -> None:
+    if not call.from_user:
+        await call.answer()
+        return
+    bots = await partner.list_for_owner(call.from_user.id)
+    if not bots:
+        await _render(
+            call, t("partner_bots_empty", lang), keyboards.partner_menu(lang, has_bots=False)
+        )
+    else:
+        await _render(call, t("partner_bots_header", lang), keyboards.partner_bots_kb(lang, bots))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("partner:setmarkup:"))
+async def cb_partner_setmarkup(
+    call: CallbackQuery, state: FSMContext, partner: PartnerService, lang: str
+) -> None:
+    if not call.from_user:
+        await call.answer()
+        return
+    bot_id = int((call.data or "").split(":")[-1])
+    await state.set_state(PartnerStates.entering_markup)
+    await state.update_data(markup_bot_id=bot_id)
+    await _render(
+        call,
+        t("partner_ask_markup", lang, max=partner.max_partner_markup),
+        keyboards.cancel_button(lang, data="menu:show"),
+    )
+    await call.answer()
+
+
+@router.message(PartnerStates.entering_markup, F.text)
+async def on_partner_markup(
+    message: Message, state: FSMContext, partner: PartnerService, lang: str
+) -> None:
+    raw = (message.text or "").strip().replace(",", ".").replace("%", "")
+    try:
+        markup = Decimal(raw)
+    except (InvalidOperation, ValueError):
+        await message.answer(t("partner_markup_invalid", lang, max=partner.max_partner_markup))
+        return
+    if markup < 0 or markup > partner.max_partner_markup:
+        await message.answer(t("partner_markup_invalid", lang, max=partner.max_partner_markup))
+        return
+    data = await state.get_data()
+    bot_id = int(data.get("markup_bot_id", 0))
+    bot = await partner.set_markup(bot_id, markup)
+    await state.clear()
+    if bot is None:
+        await message.answer(
+            t("partner_create_failed", lang), reply_markup=keyboards.main_menu(lang)
+        )
+        return
+    await message.answer(
+        t(
+            "partner_markup_set",
+            lang,
+            username=bot.username or bot.bot_id,
+            markup=bot.markup_percent,
+        ),
+        reply_markup=keyboards.main_menu(lang),
+    )
 
 
 # ── Withdrawals (user) ───────────────────────────────────────

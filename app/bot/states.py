@@ -21,3 +21,7 @@ class WithdrawStates(StatesGroup):
 class AdminWithdrawStates(StatesGroup):
     waiting_proof = State()
     waiting_reject_reason = State()
+
+
+class PartnerStates(StatesGroup):
+    entering_markup = State()

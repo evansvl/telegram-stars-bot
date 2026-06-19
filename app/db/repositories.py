@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     Order,
     OrderStatusEnum,
+    PartnerBot,
     ReferralEarning,
     User,
     Withdrawal,
@@ -189,6 +190,64 @@ class WithdrawalRepository:
         return withdrawal
 
 
+class PartnerBotRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(
+        self,
+        *,
+        owner_tg_id: int,
+        bot_id: int,
+        username: str | None,
+        token: str,
+        markup_percent: Decimal,
+    ) -> PartnerBot:
+        """Insert or refresh a partner bot (idempotent on bot_id)."""
+        stmt = (
+            pg_insert(PartnerBot)
+            .values(
+                owner_tg_id=owner_tg_id,
+                bot_id=bot_id,
+                username=username,
+                token=token,
+                markup_percent=markup_percent,
+                active=True,
+            )
+            .on_conflict_do_update(
+                index_elements=[PartnerBot.bot_id],
+                set_={"username": username, "token": token, "active": True},
+            )
+        )
+        await self._session.execute(stmt)
+        return await self.get_by_bot_id(bot_id)  # type: ignore[return-value]
+
+    async def get_by_bot_id(self, bot_id: int) -> PartnerBot | None:
+        return await self._session.scalar(select(PartnerBot).where(PartnerBot.bot_id == bot_id))
+
+    async def list_for_owner(self, owner_tg_id: int) -> list[PartnerBot]:
+        result = await self._session.execute(
+            select(PartnerBot)
+            .where(PartnerBot.owner_tg_id == owner_tg_id)
+            .order_by(PartnerBot.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_active(self) -> list[PartnerBot]:
+        result = await self._session.execute(
+            select(PartnerBot).where(PartnerBot.active.is_(True))
+        )
+        return list(result.scalars().all())
+
+    async def set_markup(self, bot_id: int, markup_percent: Decimal) -> PartnerBot | None:
+        bot = await self.get_by_bot_id(bot_id)
+        if bot is None:
+            return None
+        bot.markup_percent = markup_percent
+        await self._session.flush()
+        return bot
+
+
 class OrderRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -202,6 +261,8 @@ class OrderRepository:
         count: int,
         amount: Decimal,
         status: str = OrderStatusEnum.NEW.value,
+        partner_owner_tg_id: int | None = None,
+        partner_earning: Decimal = Decimal("0"),
     ) -> Order:
         order = Order(
             order_id=order_id,
@@ -210,6 +271,8 @@ class OrderRepository:
             count=count,
             amount=amount,
             status=status,
+            partner_owner_tg_id=partner_owner_tg_id,
+            partner_earning=partner_earning,
         )
         self._session.add(order)
         await self._session.flush()

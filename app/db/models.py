@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -79,6 +80,12 @@ class Order(Base):
         BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"), nullable=False
     )
     target_username: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Partner attribution: set when the order was placed through a partner bot.
+    partner_owner_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    partner_earning: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), nullable=False
+    )
 
     count: Mapped[int] = mapped_column(nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
@@ -155,3 +162,25 @@ class Withdrawal(Base):
         Index("ix_withdrawals_user", "user_tg_id"),
         Index("ix_withdrawals_status", "status"),
     )
+
+
+class PartnerBot(Base):
+    """A partner-owned bot (created via Telegram managed bots) hosted by us."""
+
+    __tablename__ = "partner_bots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    token: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Partner's own markup (percent) added on top of the operator markup.
+    markup_percent: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=Decimal("0"), nullable=False
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_partner_bots_owner", "owner_tg_id"),)
