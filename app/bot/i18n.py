@@ -159,6 +159,26 @@ TEXTS: dict[str, dict[str, str]] = {
             "Pay via the link below. The stars arrive automatically after payment."
         ),
     },
+    "test_order_created": {
+        "ru": (
+            "🧪 <b>ТЕСТОВЫЙ заказ</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n"
+            "Сумма: <b>{amount} ₽</b>\n\n"
+            "Платёжная ссылка не создаётся. Нажмите кнопку ниже, чтобы сымитировать "
+            "успешную оплату и проверить начисления."
+        ),
+        "en": (
+            "🧪 <b>TEST order</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n"
+            "Amount: <b>{amount} ₽</b>\n\n"
+            "No payment link is created. Tap the button below to simulate a "
+            "successful payment and check the payouts."
+        ),
+    },
+    "test_paid_done": {
+        "ru": "🧪 Тестовая оплата проведена! Звёзды «отправлены», начисления обработаны.",
+        "en": "🧪 Test payment completed! Stars “delivered”, payouts processed.",
+    },
     "checking_status": {"ru": "Проверяю статус…", "en": "Checking status…"},
     "order_not_found": {"ru": "Заказ не найден.", "en": "Order not found."},
     "order_status": {
@@ -446,6 +466,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_pay": {"ru": "💳 Оплатить", "en": "💳 Pay"},
     "btn_goto_pay": {"ru": "💳 Перейти к оплате", "en": "💳 Go to payment"},
     "btn_check": {"ru": "🔄 Проверить оплату", "en": "🔄 Check payment"},
+    "btn_test_pay": {"ru": "✅ Я оплатил (ТЕСТ)", "en": "✅ I paid (TEST)"},
     "btn_retry": {"ru": "🔁 Попробовать снова", "en": "🔁 Try again"},
     "btn_menu": {"ru": "🏠 В меню", "en": "🏠 Menu"},
 }

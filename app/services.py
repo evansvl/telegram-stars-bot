@@ -53,6 +53,7 @@ class CreatedOrder:
     amount: Decimal
     count: int
     target_username: str
+    test: bool = False
 
 
 class OrderService:
@@ -129,6 +130,30 @@ class OrderService:
                 count=count,
                 amount=amount,
                 status=OrderStatusEnum.NEW.value,
+            )
+
+        # Test mode: no WATA call, no payment link. The order waits for a simulated
+        # payment (a button in the chat) so referral/partner flows can be exercised.
+        if self._settings.test_mode:
+            async with self._db.session() as session:
+                await OrderRepository(session).update_status(
+                    order_id,
+                    status=OrderStatusEnum.PENDING.value,
+                    price=Decimal("0"),
+                    commission=Decimal("0"),
+                    margin=amount,
+                    payment_link="",
+                )
+            logger.info(
+                "TEST order created order_id=%s count=%d amount=%s", order_id, count, amount
+            )
+            return CreatedOrder(
+                order_id=order_id,
+                payment_link="",
+                amount=amount,
+                count=count,
+                target_username=target_username,
+                test=True,
             )
 
         try:
@@ -213,6 +238,13 @@ class OrderService:
                 raw_webhook=raw_webhook,
             )
         return updated
+
+    async def simulate_payment(self, order_id: str) -> Order | None:
+        """Mark a test order as paid+delivered locally (test mode only)."""
+        async with self._db.session() as session:
+            return await OrderRepository(session).update_status(
+                order_id, status=OrderStatusEnum.SUCCESS.value
+            )
 
     async def list_orders(self, buyer_tg_id: int, limit: int = 20) -> list[Order]:
         async with self._db.session() as session:

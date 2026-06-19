@@ -54,6 +54,14 @@ def payment_link(url: str, order_id: str, lang: str) -> InlineKeyboardMarkup:
     )
 
 
+def test_payment(order_id: str, lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_test_pay", lang), callback_data=f"testpay:{order_id}")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def retry_buy(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_retry", lang), callback_data="buy:start")

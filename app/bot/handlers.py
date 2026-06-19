@@ -247,6 +247,19 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
         return
 
     await state.clear()
+    if created.test:
+        await _render(
+            call,
+            t(
+                "test_order_created",
+                lang,
+                count=created.count,
+                target=created.target_username,
+                amount=created.amount,
+            ),
+            keyboards.test_payment(created.order_id, lang),
+        )
+        return
     await _render(
         call,
         t(
@@ -258,6 +271,29 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
         ),
         keyboards.payment_link(created.payment_link, created.order_id, lang),
     )
+
+
+@router.callback_query(F.data.startswith("testpay:"))
+async def cb_testpay(
+    call: CallbackQuery, service: OrderService, referral: ReferralService, lang: str
+) -> None:
+    """Simulate a successful payment (test mode) and run the payout flow."""
+    order_id = (call.data or "").split(":", 1)[1]
+    order = await service.simulate_payment(order_id)
+    await call.answer()
+    if order is None:
+        return
+    await _render(call, t("test_paid_done", lang), keyboards.main_menu(lang))
+    credited = await referral.credit_for_order(order)
+    if credited:
+        referrer_id, reward = credited
+        rlang = await service.get_user_language(referrer_id)
+        try:
+            await call.bot.send_message(
+                referrer_id, t("referral_earned_notify", rlang, amount=reward)
+            )
+        except Exception:
+            logger.exception("failed to notify referrer tg_id=%s", referrer_id)
 
 
 @router.callback_query(F.data.startswith("check:"))

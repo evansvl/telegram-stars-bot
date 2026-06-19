@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     markup_percent: float = 20.0
     auto_confirm: bool = True
 
+    # Test mode: skip WATA entirely. Orders get a "mark as paid" button instead of
+    # a real payment link, so the referral/partner flows can be tested end-to-end.
+    test_mode: bool = False
+
     # Access control. Read as a plain string (a simple type pydantic-settings never
     # JSON-decodes) and expose the parsed list via the admin_ids property below.
     admin_ids_raw: str = Field(default="", validation_alias="admin_ids")
