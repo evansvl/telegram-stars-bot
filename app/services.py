@@ -5,13 +5,18 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from app.bot.i18n import DEFAULT_LANG, normalize_lang
 from app.config import Settings
-from app.db.models import Order, OrderStatusEnum
-from app.db.repositories import OrderRepository, UserRepository
+from app.db.models import Order, OrderStatusEnum, Withdrawal, WithdrawalMethod, WithdrawalStatus
+from app.db.repositories import (
+    OrderRepository,
+    ReferralRepository,
+    UserRepository,
+    WithdrawalRepository,
+)
 from app.db.session import Database
 from app.pricing import PriceQuote, compute_amount, estimated_margin
 from app.wata.client import WataClient
@@ -220,3 +225,147 @@ class OrderService:
     async def _get_local(self, order_id: str) -> Order | None:
         async with self._db.session() as session:
             return await OrderRepository(session).get_by_order_id(order_id)
+
+
+# ── Referral program ─────────────────────────────────────────────
+
+_CREDIT_STATUSES = {OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value}
+
+
+class WithdrawalError(Exception):
+    """Raised when a withdrawal request fails validation; ``key`` is an i18n key."""
+
+    def __init__(self, key: str, **params: Any) -> None:
+        super().__init__(key)
+        self.key = key
+        self.params = params
+
+
+@dataclass(slots=True)
+class ReferralOverview:
+    link: str
+    referrals: int
+    earned: Decimal
+    available: Decimal
+    has_pending: bool
+
+
+class ReferralService:
+    def __init__(self, settings: Settings, db: Database, *, bot_username: str = "") -> None:
+        self._settings = settings
+        self._db = db
+        self.bot_username = bot_username
+
+    @property
+    def percent(self) -> float:
+        return self._settings.referral_percent
+
+    def referral_link(self, tg_id: int) -> str:
+        return f"https://t.me/{self.bot_username}?start=ref_{tg_id}"
+
+    async def register_referral(self, new_tg_id: int, referrer_tg_id: int) -> bool:
+        """Attribute a new user to a referrer (once, never self). Returns True if applied."""
+        if new_tg_id == referrer_tg_id:
+            return False
+        async with self._db.session() as session:
+            return await UserRepository(session).set_referrer(new_tg_id, referrer_tg_id)
+
+    async def credit_for_order(self, order: Order) -> tuple[int, Decimal] | None:
+        """Credit the buyer's referrer 5% of a paid order. Idempotent per order.
+
+        Returns (referrer_tg_id, amount) only when a new credit was recorded.
+        """
+        if order.status not in _CREDIT_STATUSES:
+            return None
+        percent = Decimal(str(self._settings.referral_percent))
+        amount = (order.amount * percent / Decimal("100")).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN
+        )
+        if amount <= 0:
+            return None
+        async with self._db.session() as session:
+            referrer = await UserRepository(session).get_referrer(order.buyer_tg_id)
+            if not referrer:
+                return None
+            inserted = await ReferralRepository(session).credit(
+                referrer_tg_id=referrer,
+                referred_tg_id=order.buyer_tg_id,
+                order_id=order.order_id,
+                amount=amount,
+            )
+        if not inserted:
+            return None
+        logger.info(
+            "referral credited referrer=%s order_id=%s amount=%s",
+            referrer,
+            order.order_id,
+            amount,
+        )
+        return referrer, amount
+
+    async def overview(self, tg_id: int) -> ReferralOverview:
+        async with self._db.session() as session:
+            referrals = await UserRepository(session).count_referrals(tg_id)
+            earned = await ReferralRepository(session).total_earned(tg_id)
+            committed = await WithdrawalRepository(session).committed_total(tg_id)
+            has_pending = await WithdrawalRepository(session).has_pending(tg_id)
+        return ReferralOverview(
+            link=self.referral_link(tg_id),
+            referrals=referrals,
+            earned=earned,
+            available=earned - committed,
+            has_pending=has_pending,
+        )
+
+    def min_for_method(self, method: str) -> Decimal:
+        if method == WithdrawalMethod.CRYPTO.value:
+            return self._settings.withdraw_min_crypto
+        return self._settings.withdraw_min_sbp
+
+    async def create_withdrawal(
+        self, *, tg_id: int, method: str, destination: str, amount: Decimal
+    ) -> Withdrawal:
+        """Validate against balance/minimums and create a pending request."""
+        overview = await self.overview(tg_id)
+        if overview.has_pending:
+            raise WithdrawalError("wd_has_pending")
+        minimum = self.min_for_method(method)
+        if amount < minimum:
+            raise WithdrawalError("wd_below_min", min=minimum)
+        if amount > overview.available:
+            raise WithdrawalError("wd_over_balance", available=overview.available)
+        async with self._db.session() as session:
+            return await WithdrawalRepository(session).create(
+                user_tg_id=tg_id, amount=amount, method=method, destination=destination
+            )
+
+    async def list_withdrawals(self, tg_id: int, limit: int = 20) -> list[Withdrawal]:
+        async with self._db.session() as session:
+            return await WithdrawalRepository(session).list_for_user(tg_id, limit=limit)
+
+    async def get_withdrawal(self, withdrawal_id: int) -> Withdrawal | None:
+        async with self._db.session() as session:
+            return await WithdrawalRepository(session).get(withdrawal_id)
+
+    async def approve_withdrawal(
+        self, withdrawal_id: int, *, admin_id: int, proof_type: str, proof_value: str
+    ) -> Withdrawal | None:
+        async with self._db.session() as session:
+            return await WithdrawalRepository(session).resolve(
+                withdrawal_id,
+                status=WithdrawalStatus.APPROVED.value,
+                resolved_by=admin_id,
+                proof_type=proof_type,
+                proof_value=proof_value,
+            )
+
+    async def reject_withdrawal(
+        self, withdrawal_id: int, *, admin_id: int, reason: str
+    ) -> Withdrawal | None:
+        async with self._db.session() as session:
+            return await WithdrawalRepository(session).resolve(
+                withdrawal_id,
+                status=WithdrawalStatus.REJECTED.value,
+                resolved_by=admin_id,
+                reject_reason=reason,
+            )

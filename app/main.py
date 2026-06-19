@@ -17,6 +17,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 
@@ -25,7 +26,7 @@ from app.bot.middleware import LanguageMiddleware
 from app.config import Settings, get_settings
 from app.db.session import Database
 from app.logging_config import setup_logging
-from app.services import OrderService
+from app.services import OrderService, ReferralService
 from app.wata.client import WataClient
 from app.wata.signature import SignatureVerifier
 from app.webhook.server import build_webhook_app
@@ -61,19 +62,30 @@ async def main() -> None:
 
     wata = WataClient(settings.wata_base_url, settings.wata_token, session)
     service = OrderService(settings, wata, db)
+    referral = ReferralService(settings, db)
     verifier = SignatureVerifier(settings.wata_public_key_url, session)
 
-    # Inject language into every handler; share settings/service via workflow_data.
+    # The referral link needs the bot's @username.
+    me = await bot.get_me()
+    referral.bot_username = me.username or ""
+
+    # The native "Menu" button opens the main menu (the only command is /start).
+    await bot.set_my_commands([BotCommand(command="start", description="Меню / Menu")])
+
+    # Inject language into every handler; share settings/services via workflow_data.
     dp.message.middleware(LanguageMiddleware(service))
     dp.callback_query.middleware(LanguageMiddleware(service))
     dp.include_router(router)
     dp["settings"] = settings
     dp["service"] = service
+    dp["referral"] = referral
 
     tg_secret = _telegram_secret(settings)
 
     # One aiohttp app serves WATA hooks, /health and Telegram updates.
-    app = build_webhook_app(settings=settings, service=service, bot=bot, verifier=verifier)
+    app = build_webhook_app(
+        settings=settings, service=service, referral=referral, bot=bot, verifier=verifier
+    )
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=tg_secret).register(
         app, path=settings.telegram_webhook_path
     )

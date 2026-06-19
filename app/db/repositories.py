@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -9,7 +10,14 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Order, OrderStatusEnum, User
+from app.db.models import (
+    Order,
+    OrderStatusEnum,
+    ReferralEarning,
+    User,
+    Withdrawal,
+    WithdrawalStatus,
+)
 
 
 class UserRepository:
@@ -39,6 +47,146 @@ class UserRepository:
             .on_conflict_do_update(index_elements=[User.tg_id], set_={"language": language})
         )
         await self._session.execute(stmt)
+
+    async def get_referrer(self, tg_id: int) -> int | None:
+        return await self._session.scalar(select(User.referred_by).where(User.tg_id == tg_id))
+
+    async def set_referrer(self, tg_id: int, referrer_tg_id: int) -> bool:
+        """Attribute ``tg_id`` to ``referrer_tg_id`` once; no-op if already set.
+
+        Returns True if the attribution was applied. The user row is created if
+        needed (e.g. brand-new user opening a referral link).
+        """
+        await self._session.execute(
+            pg_insert(User)
+            .values(tg_id=tg_id, referred_by=referrer_tg_id)
+            .on_conflict_do_nothing(index_elements=[User.tg_id])
+        )
+        result = await self._session.execute(
+            User.__table__.update()
+            .where(User.tg_id == tg_id, User.referred_by.is_(None))
+            .values(referred_by=referrer_tg_id)
+        )
+        return bool(result.rowcount)
+
+    async def count_referrals(self, referrer_tg_id: int) -> int:
+        count = await self._session.scalar(
+            select(func.count()).select_from(User).where(User.referred_by == referrer_tg_id)
+        )
+        return int(count or 0)
+
+
+class ReferralRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def credit(
+        self, *, referrer_tg_id: int, referred_tg_id: int, order_id: str, amount: Decimal
+    ) -> bool:
+        """Record a referral earning, once per order. Returns True if inserted."""
+        result = await self._session.execute(
+            pg_insert(ReferralEarning)
+            .values(
+                referrer_tg_id=referrer_tg_id,
+                referred_tg_id=referred_tg_id,
+                order_id=order_id,
+                amount=amount,
+            )
+            .on_conflict_do_nothing(index_elements=[ReferralEarning.order_id])
+        )
+        return bool(result.rowcount)
+
+    async def total_earned(self, referrer_tg_id: int) -> Decimal:
+        total = await self._session.scalar(
+            select(func.coalesce(func.sum(ReferralEarning.amount), 0)).where(
+                ReferralEarning.referrer_tg_id == referrer_tg_id
+            )
+        )
+        return Decimal(total or 0)
+
+
+class WithdrawalRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(
+        self, *, user_tg_id: int, amount: Decimal, method: str, destination: str
+    ) -> Withdrawal:
+        withdrawal = Withdrawal(
+            user_tg_id=user_tg_id,
+            amount=amount,
+            method=method,
+            destination=destination,
+            status=WithdrawalStatus.PENDING.value,
+        )
+        self._session.add(withdrawal)
+        await self._session.flush()
+        return withdrawal
+
+    async def get(self, withdrawal_id: int) -> Withdrawal | None:
+        return await self._session.get(Withdrawal, withdrawal_id)
+
+    async def list_for_user(self, user_tg_id: int, limit: int = 20) -> list[Withdrawal]:
+        result = await self._session.execute(
+            select(Withdrawal)
+            .where(Withdrawal.user_tg_id == user_tg_id)
+            .order_by(Withdrawal.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def committed_total(self, user_tg_id: int) -> Decimal:
+        """Sum of amounts that reduce a balance: pending (locked) + approved (paid)."""
+        total = await self._session.scalar(
+            select(func.coalesce(func.sum(Withdrawal.amount), 0)).where(
+                Withdrawal.user_tg_id == user_tg_id,
+                Withdrawal.status.in_(
+                    [WithdrawalStatus.PENDING.value, WithdrawalStatus.APPROVED.value]
+                ),
+            )
+        )
+        return Decimal(total or 0)
+
+    async def has_pending(self, user_tg_id: int) -> bool:
+        found = await self._session.scalar(
+            select(Withdrawal.id).where(
+                Withdrawal.user_tg_id == user_tg_id,
+                Withdrawal.status == WithdrawalStatus.PENDING.value,
+            )
+        )
+        return found is not None
+
+    async def list_pending(self, limit: int = 50) -> list[Withdrawal]:
+        result = await self._session.execute(
+            select(Withdrawal)
+            .where(Withdrawal.status == WithdrawalStatus.PENDING.value)
+            .order_by(Withdrawal.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def resolve(
+        self,
+        withdrawal_id: int,
+        *,
+        status: str,
+        resolved_by: int,
+        proof_type: str | None = None,
+        proof_value: str | None = None,
+        reject_reason: str | None = None,
+    ) -> Withdrawal | None:
+        """Move a PENDING withdrawal to APPROVED/REJECTED. No-op if not pending."""
+        withdrawal = await self.get(withdrawal_id)
+        if withdrawal is None or withdrawal.status != WithdrawalStatus.PENDING.value:
+            return None
+        withdrawal.status = status
+        withdrawal.resolved_by = resolved_by
+        withdrawal.proof_type = proof_type
+        withdrawal.proof_value = proof_value
+        withdrawal.reject_reason = reject_reason
+        withdrawal.resolved_at = datetime.now(tz=UTC)
+        await self._session.flush()
+        return withdrawal
 
 
 class OrderRepository:

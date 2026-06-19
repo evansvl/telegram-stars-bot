@@ -35,13 +35,17 @@ TEXTS: dict[str, dict[str, str]] = {
             "👋 <b>Привет!</b>\n\n"
             "Я помогу купить <b>Telegram Stars</b> ⭐ для любого пользователя Telegram.\n"
             "Оплата картой или через СБП — быстро и безопасно через WATA.\n\n"
-            "Нажми кнопку ниже, чтобы начать."
+            "Нажми кнопку ниже, чтобы начать.\n\n"
+            "Используя бота, вы принимаете пользовательское соглашение (/terms) "
+            "и политику конфиденциальности (/privacy)."
         ),
         "en": (
             "👋 <b>Hi!</b>\n\n"
             "I'll help you buy <b>Telegram Stars</b> ⭐ for any Telegram user.\n"
             "Pay by card or SBP — fast and secure via WATA.\n\n"
-            "Tap the button below to start."
+            "Tap the button below to start.\n\n"
+            "By using the bot you accept the Terms of Service (/terms) "
+            "and the Privacy Policy (/privacy)."
         ),
     },
     "help": {
@@ -51,12 +55,8 @@ TEXTS: dict[str, dict[str, str]] = {
             "2. Выбери количество звёзд (от 50 до 50 000).\n"
             "3. Получи ссылку на оплату и оплати картой/СБП.\n"
             "4. После оплаты звёзды доставятся автоматически ⭐\n\n"
-            "<b>Команды:</b>\n"
-            "/start — главное меню\n"
-            "/orders — мои заказы\n"
-            "/language — сменить язык\n"
-            "/help — эта справка\n"
-            "/cancel — отменить текущее действие"
+            "Всё управление — кнопками ниже. Кнопка «Меню» рядом с полем ввода "
+            "всегда открывает главное меню."
         ),
         "en": (
             "<b>❓ How it works</b>\n\n"
@@ -64,12 +64,8 @@ TEXTS: dict[str, dict[str, str]] = {
             "2. Pick the amount of stars (from 50 to 50,000).\n"
             "3. Get a payment link and pay by card/SBP.\n"
             "4. After payment the stars are delivered automatically ⭐\n\n"
-            "<b>Commands:</b>\n"
-            "/start — main menu\n"
-            "/orders — my orders\n"
-            "/language — change language\n"
-            "/help — this help\n"
-            "/cancel — cancel the current action"
+            "Everything is controlled with the buttons below. The “Menu” button "
+            "next to the input field always opens the main menu."
         ),
     },
     "choose_language": {
@@ -202,6 +198,167 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "Команда доступна только администраторам.",
         "en": "This command is for administrators only.",
     },
+    # ── Terms of service ──────────────────────────────────────
+    "terms": {
+        "ru": "📄 Пользовательское соглашение (публичная оферта):\n{url}",
+        "en": "📄 Terms of Service (public offer):\n{url}",
+    },
+    "terms_unavailable": {
+        "ru": "Пользовательское соглашение пока не опубликовано.",
+        "en": "The Terms of Service are not published yet.",
+    },
+    "privacy": {
+        "ru": "🔒 Политика конфиденциальности и обработки персональных данных:\n{url}",
+        "en": "🔒 Privacy Policy and personal data processing:\n{url}",
+    },
+    "privacy_unavailable": {
+        "ru": "Политика конфиденциальности пока не опубликована.",
+        "en": "The Privacy Policy is not published yet.",
+    },
+    # ── Referral program ──────────────────────────────────────
+    "referral_overview": {
+        "ru": (
+            "🤝 <b>Партнёрская программа</b>\n\n"
+            "Приглашайте друзей и получайте <b>{percent}%</b> с каждой их оплаты.\n\n"
+            "Ваша ссылка:\n{link}\n\n"
+            "👥 Приглашено: <b>{referrals}</b>\n"
+            "💰 Всего начислено: <b>{earned} ₽</b>\n"
+            "✅ Доступно к выводу: <b>{available} ₽</b>"
+        ),
+        "en": (
+            "🤝 <b>Referral program</b>\n\n"
+            "Invite friends and earn <b>{percent}%</b> of each of their payments.\n\n"
+            "Your link:\n{link}\n\n"
+            "👥 Invited: <b>{referrals}</b>\n"
+            "💰 Total earned: <b>{earned} ₽</b>\n"
+            "✅ Available to withdraw: <b>{available} ₽</b>"
+        ),
+    },
+    "referral_earned_notify": {
+        "ru": "🤝 Вам начислено <b>{amount} ₽</b> по партнёрской программе!",
+        "en": "🤝 You earned <b>{amount} ₽</b> from the referral program!",
+    },
+    # ── Withdrawals (user) ────────────────────────────────────
+    "withdraw_choose_method": {
+        "ru": "Выберите способ вывода средств:",
+        "en": "Choose a withdrawal method:",
+    },
+    "withdraw_ask_destination_sbp": {
+        "ru": "Отправьте реквизиты для СБП (номер телефона и банк получателя):",
+        "en": "Send your СБП details (phone number and recipient bank):",
+    },
+    "withdraw_ask_destination_crypto": {
+        "ru": "Отправьте адрес кошелька USDT (сеть TRC20 или TON):",
+        "en": "Send your USDT wallet address (TRC20 or TON network):",
+    },
+    "withdraw_ask_amount": {
+        "ru": "Введите сумму вывода в ₽.\nДоступно: <b>{available} ₽</b>, минимум: <b>{min} ₽</b>.",
+        "en": "Enter the amount in ₽.\nAvailable: <b>{available} ₽</b>, minimum: <b>{min} ₽</b>.",
+    },
+    "withdraw_not_number": {
+        "ru": "Нужно число. Введите сумму вывода в ₽:",
+        "en": "A number is required. Enter the amount in ₽:",
+    },
+    "wd_has_pending": {
+        "ru": "У вас уже есть заявка на вывод в обработке. Дождитесь её решения.",
+        "en": "You already have a withdrawal in progress. Please wait for it to be resolved.",
+    },
+    "wd_below_min": {
+        "ru": "Минимальная сумма вывода — {min} ₽.",
+        "en": "The minimum withdrawal amount is {min} ₽.",
+    },
+    "wd_over_balance": {
+        "ru": "Недостаточно средств. Доступно: {available} ₽.",
+        "en": "Insufficient balance. Available: {available} ₽.",
+    },
+    "withdraw_created": {
+        "ru": (
+            "✅ Заявка на вывод <b>{amount} ₽</b> создана (#{id}).\n"
+            "Обработка — до 5 рабочих дней."
+        ),
+        "en": (
+            "✅ Withdrawal request for <b>{amount} ₽</b> created (#{id}).\n"
+            "Processed within 5 business days."
+        ),
+    },
+    "withdraw_cancelled": {"ru": "Вывод отменён.", "en": "Withdrawal cancelled."},
+    "withdrawals_empty": {
+        "ru": "У вас пока нет заявок на вывод.",
+        "en": "You don't have any withdrawal requests yet.",
+    },
+    "withdrawals_header": {"ru": "<b>📜 Ваши выводы:</b>\n", "en": "<b>📜 Your withdrawals:</b>\n"},
+    "withdrawal_line": {
+        "ru": "• #{id} — {amount} ₽ — {method} — {status}",
+        "en": "• #{id} — {amount} ₽ — {method} — {status}",
+    },
+    "withdraw_approved_notify": {
+        "ru": "✅ Ваш вывод #{id} на <b>{amount} ₽</b> выполнен.",
+        "en": "✅ Your withdrawal #{id} for <b>{amount} ₽</b> has been paid.",
+    },
+    "withdraw_rejected_notify": {
+        "ru": (
+            "❌ Ваш вывод #{id} отклонён.\n"
+            "Причина: {reason}\n"
+            "Средства возвращены на баланс."
+        ),
+        "en": (
+            "❌ Your withdrawal #{id} was rejected.\n"
+            "Reason: {reason}\n"
+            "The funds were returned to your balance."
+        ),
+    },
+    "wd_status_Pending": {"ru": "⏳ в обработке", "en": "⏳ pending"},
+    "wd_status_Approved": {"ru": "✅ выплачено", "en": "✅ paid"},
+    "wd_status_Rejected": {"ru": "❌ отклонено", "en": "❌ rejected"},
+    "method_sbp": {"ru": "СБП", "en": "СБП"},
+    "method_crypto": {"ru": "USDT (TRC20/TON)", "en": "USDT (TRC20/TON)"},
+    # ── Withdrawals (admin moderation) ────────────────────────
+    "admin_new_withdrawal": {
+        "ru": (
+            "🆕 <b>Заявка на вывод #{id}</b>\n"
+            "Пользователь: {user}\n"
+            "Сумма: <b>{amount} ₽</b>\n"
+            "Способ: {method}\n"
+            "Реквизиты: <code>{destination}</code>"
+        ),
+        "en": (
+            "🆕 <b>Withdrawal request #{id}</b>\n"
+            "User: {user}\n"
+            "Amount: <b>{amount} ₽</b>\n"
+            "Method: {method}\n"
+            "Details: <code>{destination}</code>"
+        ),
+    },
+    "admin_ask_proof": {
+        "ru": (
+            "Отправьте пруф оплаты для заявки #{id}:\n"
+            "ссылку на транзакцию (TRON/TON) или PDF-файл (для оплаты через ИП)."
+        ),
+        "en": (
+            "Send proof of payment for request #{id}:\n"
+            "a transaction link (TRON/TON) or a PDF file (for ИП payments)."
+        ),
+    },
+    "admin_proof_invalid": {
+        "ru": "Пришлите ссылку (http/https) или PDF-документ.",
+        "en": "Send a link (http/https) or a PDF document.",
+    },
+    "admin_ask_reject_reason": {
+        "ru": "Укажите причину отклонения заявки #{id}:",
+        "en": "Enter the rejection reason for request #{id}:",
+    },
+    "admin_withdrawal_done": {
+        "ru": "Готово. Заявка #{id} обработана.",
+        "en": "Done. Request #{id} has been processed.",
+    },
+    "admin_withdrawal_gone": {
+        "ru": "Заявка не найдена или уже обработана.",
+        "en": "Request not found or already processed.",
+    },
+    "admin_proof_caption": {
+        "ru": "Пруф по выводу #{id}",
+        "en": "Proof for withdrawal #{id}",
+    },
     # ── Status labels ─────────────────────────────────────────
     "status_New": {"ru": "🆕 создаётся", "en": "🆕 creating"},
     "status_Pending": {"ru": "⏳ ожидает оплаты", "en": "⏳ awaiting payment"},
@@ -275,6 +432,15 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_orders": {"ru": "🧾 Мои заказы", "en": "🧾 My orders"},
     "btn_help": {"ru": "❓ Помощь", "en": "❓ Help"},
     "btn_language": {"ru": "🌐 Язык / Language", "en": "🌐 Language / Язык"},
+    "btn_referral": {"ru": "🤝 Партнёрка", "en": "🤝 Referrals"},
+    "btn_withdraw": {"ru": "💸 Вывести средства", "en": "💸 Withdraw"},
+    "btn_withdrawals": {"ru": "📜 Мои выводы", "en": "📜 My withdrawals"},
+    "btn_method_sbp": {"ru": "🏦 СБП", "en": "🏦 СБП"},
+    "btn_method_crypto": {"ru": "🪙 USDT (TRC20/TON)", "en": "🪙 USDT (TRC20/TON)"},
+    "btn_approve": {"ru": "✅ Подтвердить", "en": "✅ Approve"},
+    "btn_reject": {"ru": "❌ Отклонить", "en": "❌ Reject"},
+    "btn_terms": {"ru": "📄 Оферта", "en": "📄 Terms"},
+    "btn_privacy": {"ru": "🔒 Конфиденциальность", "en": "🔒 Privacy"},
     "btn_custom": {"ru": "✏️ Ввести своё", "en": "✏️ Custom amount"},
     "btn_cancel": {"ru": "✖️ Отмена", "en": "✖️ Cancel"},
     "btn_pay": {"ru": "💳 Оплатить", "en": "💳 Pay"},
@@ -297,3 +463,8 @@ def t(key: str, lang: str = DEFAULT_LANG, /, **kwargs: Any) -> str:
 def status_label(status: str, lang: str = DEFAULT_LANG) -> str:
     """Localized human label for an order status value."""
     return t(f"status_{status}", lang) if f"status_{status}" in TEXTS else status
+
+
+def withdrawal_status_label(status: str, lang: str = DEFAULT_LANG) -> str:
+    """Localized human label for a withdrawal status value."""
+    return t(f"wd_status_{status}", lang) if f"wd_status_{status}" in TEXTS else status

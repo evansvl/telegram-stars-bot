@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -53,6 +55,18 @@ class Settings(BaseSettings):
     # X-Telegram-Bot-Api-Secret-Token header and verified by aiogram.
     telegram_webhook_path: str = "/tg/webhook"
     telegram_webhook_secret: str = ""
+
+    # Referral program: reward as a percentage of the referred user's gross payment.
+    referral_percent: float = 5.0
+    # Minimum payout amount (in RUB) per withdrawal method.
+    withdraw_min_sbp: Decimal = Decimal("500")
+    withdraw_min_crypto: Decimal = Decimal("1000")
+
+    # Legal: links shown in the bot. Leave empty to hide the button/command.
+    terms_url: str = "https://telegra.ph/POLZOVATELSKOE-SOGLASHENIE-PUBLICHNAYA-OFERTA-06-19"
+    privacy_url: str = (
+        "https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-I-OBRABOTKI-PERSONALNYH-DANNYH-06-19"
+    )
 
     log_level: str = "INFO"
 

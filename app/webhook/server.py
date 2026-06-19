@@ -17,7 +17,7 @@ from aiohttp import web
 from app.bot.i18n import t
 from app.config import Settings
 from app.db.models import OrderStatusEnum
-from app.services import OrderService
+from app.services import OrderService, ReferralService
 from app.wata.signature import SignatureVerifier
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ async def _handle_webhook(request: web.Request) -> web.Response:
     settings: Settings = request.app["settings"]
     verifier: SignatureVerifier = request.app["verifier"]
     service: OrderService = request.app["service"]
+    referral: ReferralService = request.app["referral"]
     bot: Bot = request.app["bot"]
 
     body = await request.read()
@@ -92,6 +93,18 @@ async def _handle_webhook(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("failed to notify buyer tg_id=%s", order.buyer_tg_id)
 
+    # Credit the buyer's referrer (idempotent) and notify them of the reward.
+    credited = await referral.credit_for_order(order)
+    if credited:
+        referrer_id, reward = credited
+        ref_lang = await service.get_user_language(referrer_id)
+        try:
+            await bot.send_message(
+                referrer_id, t("referral_earned_notify", ref_lang, amount=reward)
+            )
+        except Exception:
+            logger.exception("failed to notify referrer tg_id=%s", referrer_id)
+
     return web.Response(status=200, text="ok")
 
 
@@ -103,12 +116,14 @@ def build_webhook_app(
     *,
     settings: Settings,
     service: OrderService,
+    referral: ReferralService,
     bot: Bot,
     verifier: SignatureVerifier,
 ) -> web.Application:
     app = web.Application()
     app["settings"] = settings
     app["service"] = service
+    app["referral"] = referral
     app["bot"] = bot
     app["verifier"] = verifier
     app.router.add_post(settings.webhook_path, _handle_webhook)
