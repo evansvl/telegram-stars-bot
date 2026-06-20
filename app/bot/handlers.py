@@ -327,6 +327,12 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
     partner_earning = Decimal(str(data.get("partner_earning", "0")))
     # Remember the order message so the payment webhook can delete it on success.
     msg = call.message if isinstance(call.message, Message) else None
+    # Send the buyer back to *this* bot after paying (works for partner bots too).
+    redirect_url = None
+    if call.bot:
+        me = await call.bot.me()
+        if me.username:
+            redirect_url = f"https://t.me/{me.username}"
     try:
         created = await service.create_order(
             buyer_tg_id=user.id,
@@ -339,6 +345,7 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
             bot_id=call.bot.id if call.bot else None,
             chat_id=msg.chat.id if msg else None,
             message_id=msg.message_id if msg else None,
+            redirect_url=redirect_url,
         )
     except WataError as exc:
         await _render(call, f"⚠️ {t(exc.message_key(), lang)}", keyboards.retry_buy(lang))

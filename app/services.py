@@ -224,6 +224,7 @@ class OrderService:
         bot_id: int | None = None,
         chat_id: int | None = None,
         message_id: int | None = None,
+        redirect_url: str | None = None,
     ) -> CreatedOrder:
         """Create a WATA order and persist it. Returns the payment link."""
         order_id = uuid.uuid4().hex
@@ -278,6 +279,8 @@ class OrderService:
                 order_id=order_id,
                 description=f"Telegram Stars x{count} for @{target_username}",
                 telegram_id=buyer_tg_id,
+                success_redirect_url=redirect_url,
+                fail_redirect_url=redirect_url,
             )
         except Exception:
             async with self._db.session() as session:
