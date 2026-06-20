@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # a real payment link, so the referral/partner flows can be tested end-to-end.
     test_mode: bool = False
 
+    # WATA limits the number of concurrent unpaid orders per buyer account. We
+    # block a new order past this many recent unpaid ones with a clear message.
+    max_active_orders: int = 3
+
     # Access control. Read as a plain string (a simple type pydantic-settings never
     # JSON-decodes) and expose the parsed list via the admin_ids property below.
     admin_ids_raw: str = Field(default="", validation_alias="admin_ids")

@@ -153,6 +153,16 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
     },
     "creating_order": {"ru": "Создаю заказ…", "en": "Creating the order…"},
+    "too_many_orders": {
+        "ru": (
+            "⚠️ Слишком много незавершённых заказов (лимит {limit}). Оплатите или "
+            "дождитесь истечения текущих и попробуйте снова."
+        ),
+        "en": (
+            "⚠️ Too many unfinished orders (limit {limit}). Pay or wait for the "
+            "current ones to expire, then try again."
+        ),
+    },
     "order_created": {
         "ru": (
             "💳 Заказ создан!\n\n"
@@ -434,12 +444,14 @@ TEXTS: dict[str, dict[str, str]] = {
     },
     "partner_create_prompt": {
         "ru": (
-            "Нажмите кнопку ниже и подтвердите создание бота в Telegram. "
-            "Имя и @username бот предложит сам — токен подключится автоматически."
+            "👇 Внизу, у поля ввода, появилась кнопка <b>«➕ Создать бота»</b> — "
+            "нажмите её. Telegram сам спросит имя и @username, токен подключится "
+            "автоматически."
         ),
         "en": (
-            "Tap the button below and confirm creating the bot in Telegram. "
-            "It will suggest a name and @username — the token connects automatically."
+            "👇 A <b>“➕ Create a bot”</b> button has appeared at the bottom, by the "
+            "input field — tap it. Telegram will ask for a name and @username; the "
+            "token connects automatically."
         ),
     },
     "partner_bot_created": {

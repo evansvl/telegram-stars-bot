@@ -383,6 +383,10 @@ class OrderService:
         async with self._db.session() as session:
             return await OrderRepository(session).list_for_buyer(buyer_tg_id, limit=limit)
 
+    async def active_order_count(self, tg_id: int) -> int:
+        async with self._db.session() as session:
+            return await OrderRepository(session).count_active(tg_id)
+
     async def buyer_profile(self, tg_id: int) -> BuyerProfile:
         async with self._db.session() as session:
             registered = await UserRepository(session).get_created_at(tg_id)

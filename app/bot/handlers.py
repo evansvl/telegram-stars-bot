@@ -311,7 +311,13 @@ async def on_custom_count(
 
 
 @router.callback_query(BuyStates.confirm_payment, F.data == "pay:confirm")
-async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, lang: str) -> None:
+async def cb_pay(
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    settings: Settings,
+    lang: str,
+) -> None:
     data = await state.get_data()
     target = data.get("target_username")
     count = data.get("count")
@@ -321,8 +327,19 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
         await state.clear()
         return
 
-    await call.answer(t("creating_order", lang))
     user = call.from_user
+    # WATA caps concurrent unpaid orders per account; block the extra one cleanly.
+    if await service.active_order_count(user.id) >= settings.max_active_orders:
+        await call.answer()
+        await _render(
+            call,
+            t("too_many_orders", lang, limit=settings.max_active_orders),
+            keyboards.main_menu(lang),
+        )
+        await state.clear()
+        return
+
+    await call.answer(t("creating_order", lang))
     partner_owner = data.get("partner_owner")
     partner_earning = Decimal(str(data.get("partner_earning", "0")))
     # Remember the order message so the payment webhook can delete it on success.

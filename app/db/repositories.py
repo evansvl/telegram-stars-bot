@@ -350,6 +350,25 @@ class OrderRepository:
         await self._session.flush()
         return order
 
+    async def count_active(self, buyer_tg_id: int, within_minutes: int = 60) -> int:
+        """Recent unpaid orders for a buyer (matches WATA's concurrent-order limit).
+
+        Bounded to a recent window so WATA-expired links don't block forever even
+        if we never received an expiry webhook for them.
+        """
+        active = [OrderStatusEnum.NEW.value, OrderStatusEnum.PENDING.value]
+        since = datetime.now(tz=UTC) - timedelta(minutes=within_minutes)
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(Order)
+            .where(
+                Order.buyer_tg_id == buyer_tg_id,
+                Order.status.in_(active),
+                Order.created_at >= since,
+            )
+        )
+        return int(count or 0)
+
     async def buyer_stats(self, buyer_tg_id: int) -> dict[str, Any]:
         """A single buyer's paid totals: order count, stars bought, money spent."""
         paid = [OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value]
