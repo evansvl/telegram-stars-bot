@@ -428,17 +428,18 @@ TEXTS: dict[str, dict[str, str]] = {
             "🧩 <b>Партнёрам: свой бот</b>\n\n"
             "Создайте собственного бота для продажи звёзд — он работает на нашей "
             "инфраструктуре, платежи и выдача звёзд на нашей стороне.\n\n"
-            "Вы получаете комиссию <b>{commission}%</b> с каждой продажи через вашего "
-            "бота. Доход копится на общий баланс и выводится в разделе «Партнёрка».\n\n"
+            "Вы сами задаёте наценку — до <b>{max}%</b> — и зарабатываете её с каждой "
+            "продажи. Мы удерживаем лишь <b>{cut}%</b> от вашей наценки. Доход копится "
+            "на общий баланс и выводится в разделе «Партнёрка».\n\n"
             "Ваших ботов: <b>{count}</b>"
         ),
         "en": (
             "🧩 <b>Partners: your own bot</b>\n\n"
             "Create your own Stars-selling bot — it runs on our infrastructure, with "
             "payments and delivery on our side.\n\n"
-            "You earn a <b>{commission}%</b> commission on every sale through your bot. "
-            "Earnings accrue to your shared balance and are paid out in the “Referrals” "
-            "section.\n\n"
+            "You set your own markup — up to <b>{max}%</b> — and earn it on every sale. "
+            "We keep just <b>{cut}%</b> of your markup. Earnings accrue to your shared "
+            "balance and are paid out in the “Referrals” section.\n\n"
             "Your bots: <b>{count}</b>"
         ),
     },
@@ -504,13 +505,15 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": (
             "⚙️ <b>Настройки вашего бота</b>\n\n"
             "Бот: <b>@{username}</b>\n"
-            "Ваша комиссия: <b>{commission}%</b> с каждой продажи\n"
+            "Ваша наценка: <b>{markup}%</b> (макс. {max}%)\n"
+            "Наша комиссия: <b>{cut}%</b> от вашей наценки\n"
             "Статус: {status}"
         ),
         "en": (
             "⚙️ <b>Your bot settings</b>\n\n"
             "Bot: <b>@{username}</b>\n"
-            "Your commission: <b>{commission}%</b> per sale\n"
+            "Your markup: <b>{markup}%</b> (max {max}%)\n"
+            "Our fee: <b>{cut}%</b> of your markup\n"
             "Status: {status}"
         ),
     },
@@ -528,7 +531,10 @@ TEXTS: dict[str, dict[str, str]] = {
             "За 3 дня: <b>{d3_stars}</b> ⭐, {d3_orders} зак., {d3_revenue} ₽\n"
             "За 7 дней: <b>{d7_stars}</b> ⭐, {d7_orders} зак., {d7_revenue} ₽\n"
             "За 30 дней: <b>{d30_stars}</b> ⭐, {d30_orders} зак., {d30_revenue} ₽\n\n"
-            "Маржа за 30 дней: <b>{d30_margin} ₽</b>"
+            "Маржа за 30 дней: <b>{d30_margin} ₽</b>\n\n"
+            "👥 Пользователей: <b>{users}</b>\n"
+            "💰 Партнёрских начислений: <b>{ref_earned} ₽</b> "
+            "(к выплате {ref_outstanding} ₽)"
         ),
         "en": (
             "📊 <b>Sales (paid)</b>\n\n"
@@ -536,16 +542,27 @@ TEXTS: dict[str, dict[str, str]] = {
             "3 days: <b>{d3_stars}</b> ⭐, {d3_orders} orders, {d3_revenue} ₽\n"
             "7 days: <b>{d7_stars}</b> ⭐, {d7_orders} orders, {d7_revenue} ₽\n"
             "30 days: <b>{d30_stars}</b> ⭐, {d30_orders} orders, {d30_revenue} ₽\n\n"
-            "Margin (30 days): <b>{d30_margin} ₽</b>"
+            "Margin (30 days): <b>{d30_margin} ₽</b>\n\n"
+            "👥 Users: <b>{users}</b>\n"
+            "💰 Partner/referral credited: <b>{ref_earned} ₽</b> "
+            "(owed {ref_outstanding} ₽)"
         ),
     },
     "admin_ask_user_id": {
-        "ru": "Отправьте Telegram ID пользователя:",
-        "en": "Send the user's Telegram ID:",
+        "ru": "Отправьте Telegram ID или @username пользователя:",
+        "en": "Send the user's Telegram ID or @username:",
     },
     "admin_bad_user_id": {
-        "ru": "Нужен числовой ID. Попробуйте ещё раз:",
-        "en": "A numeric ID is required. Try again:",
+        "ru": "Не найдено. Отправьте числовой ID или @username:",
+        "en": "Not found. Send a numeric ID or @username:",
+    },
+    "admin_users_header": {
+        "ru": "👥 <b>Последние пользователи</b>\nВыберите или нажмите «Поиск»:",
+        "en": "👥 <b>Recent users</b>\nPick one or tap “Search”:",
+    },
+    "admin_users_empty": {
+        "ru": "Пользователей пока нет. Нажмите «Поиск», чтобы найти по ID/@username.",
+        "en": "No users yet. Tap “Search” to look up by ID/@username.",
     },
     "admin_user_not_found": {
         "ru": "Пользователь не найден.",
@@ -670,6 +687,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_admin": {"ru": "🛠 Админка", "en": "🛠 Admin"},
     "btn_admin_stats": {"ru": "📊 Статистика", "en": "📊 Stats"},
     "btn_admin_finduser": {"ru": "🔍 Найти пользователя", "en": "🔍 Find user"},
+    "btn_admin_search": {"ru": "🔍 Поиск по ID / @username", "en": "🔍 Search by ID / @username"},
     "btn_admin_topup": {"ru": "⭐ Пополнить без наценки", "en": "⭐ Top up (no markup)"},
     "btn_ban": {"ru": "🚫 Забанить", "en": "🚫 Ban"},
     "btn_unban": {"ru": "✅ Разбанить", "en": "✅ Unban"},

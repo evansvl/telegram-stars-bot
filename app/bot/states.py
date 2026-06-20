@@ -25,3 +25,7 @@ class AdminWithdrawStates(StatesGroup):
 
 class AdminStates(StatesGroup):
     entering_user_id = State()
+
+
+class PartnerStates(StatesGroup):
+    entering_markup = State()

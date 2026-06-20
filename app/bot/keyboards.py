@@ -224,6 +224,10 @@ def partner_create_kb(lang: str) -> ReplyKeyboardMarkup:
 def partner_bots_kb(lang: str, bots: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for b in bots:
+        builder.button(
+            text=t("btn_partner_set_markup", lang, username=b.username or b.bot_id),
+            callback_data=f"partner:setmarkup:{b.bot_id}",
+        )
         toggle_key = "btn_partner_disable" if b.active else "btn_partner_enable"
         label = f"@{b.username or b.bot_id} — " + t(toggle_key, lang)
         builder.button(text=label, callback_data=f"partner:toggle:{b.bot_id}")
@@ -236,6 +240,7 @@ def partner_bots_kb(lang: str, bots: list) -> InlineKeyboardMarkup:
 def owner_panel(lang: str, bot_id: int, active: bool) -> InlineKeyboardMarkup:
     """Settings shown to a partner inside their own bot."""
     builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_set_markup", lang), callback_data=f"partner:setmarkup:{bot_id}")
     toggle_key = "btn_partner_disable" if active else "btn_partner_enable"
     builder.button(text=t(toggle_key, lang), callback_data=f"partner:toggle:{bot_id}")
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")
@@ -258,6 +263,18 @@ def admin_back(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_back", lang), callback_data="admin:show")
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_users_kb(users: list, lang: str) -> InlineKeyboardMarkup:
+    """Recent-users list: each user, a search button, and back to the panel."""
+    builder = InlineKeyboardBuilder()
+    for u in users:
+        label = f"@{u.username}" if u.username else str(u.tg_id)
+        builder.button(text=label, callback_data=f"admin:user:{u.tg_id}")
+    builder.button(text=t("btn_admin_search", lang), callback_data="admin:search")
+    builder.button(text=t("btn_back", lang), callback_data="admin:show")
     builder.adjust(1)
     return builder.as_markup()
 

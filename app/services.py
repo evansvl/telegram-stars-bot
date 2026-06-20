@@ -139,6 +139,18 @@ class OrderService:
         async with self._db.session() as session:
             return await UserRepository(session).get(tg_id)
 
+    async def user_count(self) -> int:
+        async with self._db.session() as session:
+            return await UserRepository(session).count()
+
+    async def recent_users(self, limit: int = 6) -> list[User]:
+        async with self._db.session() as session:
+            return await UserRepository(session).recent(limit)
+
+    async def find_user_by_username(self, username: str) -> User | None:
+        async with self._db.session() as session:
+            return await UserRepository(session).find_by_username(username)
+
     async def period_stats(self, days: int) -> dict[str, Any]:
         async with self._db.session() as session:
             return await OrderRepository(session).period_stats(days)
@@ -518,6 +530,13 @@ class ReferralService:
             has_pending=has_pending,
         )
 
+    async def bot_totals(self) -> tuple[Decimal, Decimal]:
+        """Bot-wide wallet figures: (total ever credited, outstanding/owed)."""
+        async with self._db.session() as session:
+            credited = await ReferralRepository(session).total_credited()
+            paid = await WithdrawalRepository(session).total_approved()
+        return credited, credited - paid
+
     def min_for_method(self, method: str) -> Decimal:
         if method == WithdrawalMethod.CRYPTO.value:
             return self._settings.withdraw_min_crypto
@@ -578,28 +597,57 @@ class ReferralService:
 class PartnerService:
     """Manages partner-owned bots.
 
-    Partner bots sell at the operator's normal price (no per-partner markup); the
-    owner earns a fixed commission (``PARTNER_COMMISSION_PERCENT``) of each sale
-    through their bot, paid into the shared referral wallet / withdrawal system.
+    A partner sets their own markup (on top of the operator markup, total capped
+    at WATA's +50%). The partner earns that markup on each sale, minus the
+    operator's cut (``PARTNER_COMMISSION_PERCENT``, e.g. 10% of the markup). The
+    partner's share is paid into the shared referral wallet / withdrawal system.
     """
 
     def __init__(self, settings: Settings, db: Database) -> None:
         self._settings = settings
         self._db = db
+        self._markup_cache: dict[int, Decimal] = {}
 
     @property
-    def commission_percent(self) -> Decimal:
+    def operator_cut_percent(self) -> Decimal:
+        """The operator's commission, as a percent of the partner's markup."""
         return Decimal(str(self._settings.partner_commission_percent))
 
-    def earning_for(self, amount: Decimal) -> Decimal:
-        """The partner's commission on a sale of ``amount``."""
-        return (amount * self.commission_percent / Decimal("100")).quantize(
-            Decimal("0.01"), rounding=ROUND_DOWN
-        )
+    @property
+    def max_partner_markup(self) -> Decimal:
+        """Room left under WATA's +50% cap after the operator's own markup."""
+        room = Decimal("50") - Decimal(str(self._settings.markup_percent))
+        return room if room > Decimal("0") else Decimal("0")
+
+    def partner_share(self, gross_markup: Decimal) -> Decimal:
+        """The partner's take of their markup money, after the operator's cut."""
+        keep = (Decimal("100") - self.operator_cut_percent) / Decimal("100")
+        share = gross_markup * keep
+        return share.quantize(Decimal("0.01"), rounding=ROUND_DOWN) if share > 0 else Decimal("0")
+
+    async def partner_markup(self, bot_id: int) -> Decimal:
+        """The bot's markup; 0 for the main bot or unknown bots."""
+        cached = self._markup_cache.get(bot_id)
+        if cached is not None:
+            return cached
+        async with self._db.session() as session:
+            bot = await PartnerBotRepository(session).get_by_bot_id(bot_id)
+        markup = bot.markup_percent if bot else Decimal("0")
+        self._markup_cache[bot_id] = markup
+        return markup
+
+    async def set_markup(self, bot_id: int, markup_percent: Decimal) -> PartnerBot | None:
+        clamped = max(Decimal("0"), min(markup_percent, self.max_partner_markup))
+        async with self._db.session() as session:
+            bot = await PartnerBotRepository(session).set_markup(bot_id, clamped)
+        if bot is not None:
+            self._markup_cache[bot_id] = clamped
+        return bot
 
     async def create_bot(
         self, *, owner_tg_id: int, bot_id: int, username: str | None, token: str
     ) -> PartnerBot:
+        self._markup_cache[bot_id] = Decimal("0")
         async with self._db.session() as session:
             return await PartnerBotRepository(session).create(
                 owner_tg_id=owner_tg_id,

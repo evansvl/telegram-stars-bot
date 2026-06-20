@@ -82,6 +82,22 @@ class UserRepository:
     async def get(self, tg_id: int) -> User | None:
         return await self._session.get(User, tg_id)
 
+    async def count(self) -> int:
+        return int(await self._session.scalar(select(func.count()).select_from(User)) or 0)
+
+    async def recent(self, limit: int = 6) -> list[User]:
+        """The most recently registered users."""
+        result = await self._session.execute(
+            select(User).order_by(User.created_at.desc()).limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def find_by_username(self, username: str) -> User | None:
+        """Look a user up by @username (case-insensitive), without the leading @."""
+        return await self._session.scalar(
+            select(User).where(func.lower(User.username) == username.lstrip("@").lower())
+        )
+
     async def is_banned(self, tg_id: int) -> bool:
         return bool(await self._session.scalar(select(User.banned).where(User.tg_id == tg_id)))
 
@@ -119,6 +135,13 @@ class ReferralRepository:
             select(func.coalesce(func.sum(ReferralEarning.amount), 0)).where(
                 ReferralEarning.referrer_tg_id == referrer_tg_id
             )
+        )
+        return Decimal(total or 0)
+
+    async def total_credited(self) -> Decimal:
+        """Sum of all referral/partner earnings ever credited, across all users."""
+        total = await self._session.scalar(
+            select(func.coalesce(func.sum(ReferralEarning.amount), 0))
         )
         return Decimal(total or 0)
 
@@ -161,6 +184,15 @@ class WithdrawalRepository:
                 Withdrawal.status.in_(
                     [WithdrawalStatus.PENDING.value, WithdrawalStatus.APPROVED.value]
                 ),
+            )
+        )
+        return Decimal(total or 0)
+
+    async def total_approved(self) -> Decimal:
+        """Sum of all paid-out (approved) withdrawals, across all users."""
+        total = await self._session.scalar(
+            select(func.coalesce(func.sum(Withdrawal.amount), 0)).where(
+                Withdrawal.status == WithdrawalStatus.APPROVED.value
             )
         )
         return Decimal(total or 0)
