@@ -48,6 +48,35 @@ def map_status(wata_status: str) -> str:
     return enum_val.value if enum_val else (wata_status or OrderStatusEnum.PENDING.value)
 
 
+# Webhook payment-notification status -> local status. Used as a fallback when the
+# authoritative GET /stars/order is unavailable (WATA limits it to 1 req / 30s).
+_WEBHOOK_TO_LOCAL = {
+    "New": OrderStatusEnum.PENDING.value,
+    "Created": OrderStatusEnum.PENDING.value,
+    "Pending": OrderStatusEnum.PENDING.value,
+    "Review": OrderStatusEnum.REVIEW.value,
+    "Paid": OrderStatusEnum.PAID.value,
+    "Success": OrderStatusEnum.SUCCESS.value,
+    "Declined": OrderStatusEnum.FAIL.value,
+    "Failed": OrderStatusEnum.FAIL.value,
+    "Error": OrderStatusEnum.FAIL.value,
+    "Expired": OrderStatusEnum.FAIL.value,
+    "Refunded": OrderStatusEnum.REFUNDED.value,
+    "Cancelled": OrderStatusEnum.REFUNDED.value,
+    "Canceled": OrderStatusEnum.REFUNDED.value,
+}
+
+
+def webhook_status(payload: dict[str, Any] | None) -> str | None:
+    """Map a webhook payload's status field to a local status, if recognizable."""
+    if not payload:
+        return None
+    raw = payload.get("transactionStatus") or payload.get("status")
+    if not isinstance(raw, str):
+        return None
+    return _WEBHOOK_TO_LOCAL.get(raw)
+
+
 @dataclass(slots=True)
 class Quote:
     star_price: StarPrice
@@ -215,14 +244,18 @@ class OrderService:
     ) -> Order | None:
         """Fetch authoritative status from WATA, auto-confirm if configured, persist.
 
-        Used both by the webhook handler and the manual "check payment" button.
+        WATA rate-limits GET /stars/order to 1 request / 30s per object, so when the
+        fetch fails we fall back to the status carried in the webhook payload — that
+        is what lets the buyer be notified of payment without a successful re-fetch.
         Returns the updated Order (or None if unknown).
         """
         try:
             status = await self._wata.get_order(order_id)
         except Exception:
-            logger.exception("failed to fetch order status order_id=%s", order_id)
-            return await self._get_local(order_id)
+            logger.warning(
+                "order GET unavailable; falling back to webhook status order_id=%s", order_id
+            )
+            return await self._apply_webhook_status(order_id, raw_webhook)
 
         wata_status = status.status
 
@@ -250,6 +283,18 @@ class OrderService:
                 raw_webhook=raw_webhook,
             )
         return updated
+
+    async def _apply_webhook_status(
+        self, order_id: str, raw_webhook: dict[str, Any] | None
+    ) -> Order | None:
+        """Update an order from the webhook payload when WATA's GET is unavailable."""
+        mapped = webhook_status(raw_webhook)
+        if mapped is None:
+            return await self._get_local(order_id)
+        async with self._db.session() as session:
+            return await OrderRepository(session).update_status(
+                order_id, status=mapped, raw_webhook=raw_webhook
+            )
 
     async def simulate_payment(self, order_id: str) -> Order | None:
         """Mark a test order as paid+delivered locally (test mode only)."""

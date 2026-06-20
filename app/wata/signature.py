@@ -8,6 +8,7 @@ signature in the ``X-Signature`` header. The public key is fetched from
 from __future__ import annotations
 
 import base64
+import json
 import logging
 
 import aiohttp
@@ -37,15 +38,39 @@ class SignatureVerifier:
             logger.warning("failed to fetch WATA public key: %s", exc)
             return None
 
+        # WATA returns the key wrapped in JSON: {"value": "-----BEGIN PUBLIC KEY-----\n..."}.
+        # Fall back to a raw PEM/DER body for robustness.
+        candidates: list[bytes] = []
+        text = raw.decode("utf-8", errors="ignore").strip()
         try:
-            key = serialization.load_pem_public_key(raw)
-        except ValueError:
-            try:
-                key = serialization.load_der_public_key(raw)
-            except ValueError:
-                logger.error("WATA public key is neither valid PEM nor DER")
-                return None
+            parsed = json.loads(text)
+        except (ValueError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            for field in ("value", "publicKey", "key"):
+                value = parsed.get(field)
+                if isinstance(value, str) and value:
+                    candidates.append(value.encode())
+                    break
+        elif isinstance(parsed, str) and parsed:
+            candidates.append(parsed.encode())
+        candidates.append(raw)
 
+        key = None
+        for candidate in candidates:
+            try:
+                key = serialization.load_pem_public_key(candidate)
+                break
+            except ValueError:
+                try:
+                    key = serialization.load_der_public_key(candidate)
+                    break
+                except ValueError:
+                    continue
+
+        if key is None:
+            logger.error("WATA public key is neither valid PEM nor DER")
+            return None
         if not isinstance(key, rsa.RSAPublicKey):
             logger.error("WATA public key is not an RSA key")
             return None

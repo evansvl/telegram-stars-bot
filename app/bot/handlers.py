@@ -332,21 +332,6 @@ async def cb_testpay(
             logger.exception("failed to notify referrer tg_id=%s", referrer_id)
 
 
-@router.callback_query(F.data.startswith("check:"))
-async def cb_check(
-    call: CallbackQuery, service: OrderService, referral: ReferralService, lang: str
-) -> None:
-    order_id = (call.data or "").split(":", 1)[1]
-    await call.answer(t("checking_status", lang))
-    order = await service.sync_order(order_id)
-    if order is None:
-        return
-    # Credit the referrer if this manual check is what confirms the payment.
-    await referral.credit_for_order(order)
-    if isinstance(call.message, Message):
-        await call.message.answer(t("order_status", lang, label=status_label(order.status, lang)))
-
-
 # ── Referral program ─────────────────────────────────────────
 
 

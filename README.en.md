@@ -294,10 +294,12 @@ start), prunes old images and prints the current version (git SHA).
 ## ❓ FAQ
 
 **Payment went through, but the stars didn't arrive.**
-Tap "Check payment" in the bot — it reconciles the status via the API. If the status
-still doesn't change, make sure the WATA webhook points at `https://<domain><WEBHOOK_PATH>`
-and that this address is reachable from the outside (`docker compose logs -f bot` shows
-incoming notifications).
+The bot notifies about payment automatically via the WATA webhook — there is no manual
+check button. If no notification arrives, make sure the WATA webhook points at
+`https://<domain><WEBHOOK_PATH>` and that this address is reachable from the outside
+(`docker compose logs -f bot` shows incoming notifications). WATA rate-limits
+`GET /stars/order` (1 request / 30s per order), so when that call is unavailable the bot
+takes the status straight from the webhook body.
 
 **Error `STR_1002` when entering the recipient.**
 WATA couldn't find such a Telegram account. Check the @username (no `@`, 5–32 chars).

@@ -53,10 +53,12 @@ def confirm_payment(lang: str) -> InlineKeyboardMarkup:
 
 
 def payment_link(url: str, order_id: str, lang: str) -> InlineKeyboardMarkup:
+    # No "check payment" button: the WATA webhook updates the order and notifies the
+    # buyer automatically once paid.
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=t("btn_goto_pay", lang), url=url)],
-            [InlineKeyboardButton(text=t("btn_check", lang), callback_data=f"check:{order_id}")],
+            [InlineKeyboardButton(text=t("btn_menu", lang), callback_data="menu:show")],
         ]
     )
 
