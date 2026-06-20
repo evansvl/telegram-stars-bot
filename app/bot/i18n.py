@@ -36,16 +36,16 @@ TEXTS: dict[str, dict[str, str]] = {
             "Я помогу купить <b>Telegram Stars</b> ⭐ для любого пользователя Telegram.\n"
             "Оплата картой или через СБП — быстро и безопасно через WATA.\n\n"
             "Нажми кнопку ниже, чтобы начать.\n\n"
-            "Используя бота, вы принимаете пользовательское соглашение (/terms) "
-            "и политику конфиденциальности (/privacy)."
+            "Используя бота, вы принимаете оферту и политику конфиденциальности "
+            "(раздел «❓ Помощь»)."
         ),
         "en": (
             "👋 <b>Hi!</b>\n\n"
             "I'll help you buy <b>Telegram Stars</b> ⭐ for any Telegram user.\n"
             "Pay by card or SBP — fast and secure via WATA.\n\n"
             "Tap the button below to start.\n\n"
-            "By using the bot you accept the Terms of Service (/terms) "
-            "and the Privacy Policy (/privacy)."
+            "By using the bot you accept the Terms of Service and Privacy Policy "
+            "(see “❓ Help”)."
         ),
     },
     "help": {
@@ -55,8 +55,8 @@ TEXTS: dict[str, dict[str, str]] = {
             "2. Выбери количество звёзд (от 50 до 50 000).\n"
             "3. Получи ссылку на оплату и оплати картой/СБП.\n"
             "4. После оплаты звёзды доставятся автоматически ⭐\n\n"
-            "Всё управление — кнопками ниже. Кнопка «Меню» рядом с полем ввода "
-            "всегда открывает главное меню."
+            "Документы и поддержка — на кнопках ниже. Кнопка «Меню» рядом с полем "
+            "ввода всегда открывает главное меню."
         ),
         "en": (
             "<b>❓ How it works</b>\n\n"
@@ -64,7 +64,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "2. Pick the amount of stars (from 50 to 50,000).\n"
             "3. Get a payment link and pay by card/SBP.\n"
             "4. After payment the stars are delivered automatically ⭐\n\n"
-            "Everything is controlled with the buttons below. The “Menu” button "
+            "Documents and support are on the buttons below. The “Menu” button "
             "next to the input field always opens the main menu."
         ),
     },
@@ -82,8 +82,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "Cancelled. Back to the menu.",
     },
     "send_text_or_cancel": {
-        "ru": "Пожалуйста, отправьте текстовое сообщение или нажмите /cancel.",
-        "en": "Please send a text message or tap /cancel.",
+        "ru": "Пожалуйста, отправьте текстовое сообщение или нажмите «Отмена».",
+        "en": "Please send a text message or tap “Cancel”.",
     },
     # ── Buy flow ──────────────────────────────────────────────
     "ask_username": {
@@ -104,6 +104,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "Введите другой @username:",
         "en": "Enter another @username:",
     },
+    "no_username": {
+        "ru": "У вас не задан @username в Telegram. Введите получателя вручную.",
+        "en": "You don't have a Telegram @username set. Enter the recipient manually.",
+    },
     "user_found": {
         "ru": "✅ Пользователь <b>@{username}</b> найден.\n\nСколько звёзд отправить?",
         "en": "✅ User <b>@{username}</b> found.\n\nHow many stars to send?",
@@ -121,8 +125,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "The amount must be between {min} and {max}. Please try again:",
     },
     "session_expired": {
-        "ru": "Сессия истекла. Начните заново /start.",
-        "en": "Session expired. Start over with /start.",
+        "ru": "Сессия истекла. Откройте меню заново кнопкой «Меню».",
+        "en": "Session expired. Open the menu again with the “Menu” button.",
     },
     "session_expired_alert": {
         "ru": "Сессия истекла, начните заново.",
@@ -215,8 +219,8 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
     },
     "admin_only": {
-        "ru": "Команда доступна только администраторам.",
-        "en": "This command is for administrators only.",
+        "ru": "Доступно только администраторам.",
+        "en": "Available to administrators only.",
     },
     # ── Terms of service ──────────────────────────────────────
     "terms": {
@@ -413,11 +417,11 @@ TEXTS: dict[str, dict[str, str]] = {
     "partner_bot_created": {
         "ru": (
             "✅ Бот <b>@{username}</b> создан и запущен!\n\n"
-            "Откройте его и нажмите /start. Не забудьте задать наценку в «Мои боты»."
+            "Откройте его и нажмите «Запустить». Не забудьте задать наценку в «Мои боты»."
         ),
         "en": (
             "✅ Bot <b>@{username}</b> created and running!\n\n"
-            "Open it and tap /start. Don't forget to set your markup in “My bots”."
+            "Open it and tap “Start”. Don't forget to set your markup in “My bots”."
         ),
     },
     "partner_create_failed": {
@@ -534,6 +538,8 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_reject": {"ru": "❌ Отклонить", "en": "❌ Reject"},
     "btn_terms": {"ru": "📄 Оферта", "en": "📄 Terms"},
     "btn_privacy": {"ru": "🔒 Конфиденциальность", "en": "🔒 Privacy"},
+    "btn_for_myself": {"ru": "⭐ Себе", "en": "⭐ For myself"},
+    "btn_support": {"ru": "💬 Поддержка", "en": "💬 Support"},
     "btn_custom": {"ru": "✏️ Ввести своё", "en": "✏️ Custom amount"},
     "btn_cancel": {"ru": "✖️ Отмена", "en": "✖️ Cancel"},
     "btn_pay": {"ru": "💳 Оплатить", "en": "💳 Pay"},

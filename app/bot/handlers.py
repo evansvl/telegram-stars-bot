@@ -88,7 +88,7 @@ async def cmd_start(
 
 @router.callback_query(F.data == "help:show")
 async def cb_help(call: CallbackQuery, lang: str) -> None:
-    await _render(call, t("help", lang), keyboards.main_menu(lang))
+    await _render(call, t("help", lang), keyboards.help_menu(lang))
     await call.answer()
 
 
@@ -131,7 +131,46 @@ async def cb_language_set(call: CallbackQuery, service: OrderService) -> None:
 async def cb_buy_start(call: CallbackQuery, state: FSMContext, lang: str) -> None:
     await state.clear()
     await state.set_state(BuyStates.waiting_username)
-    await _render(call, t("ask_username", lang), keyboards.cancel_button(lang))
+    await _render(call, t("ask_username", lang), keyboards.ask_username_kb(lang))
+    await call.answer()
+
+
+async def _set_target_username(
+    event: Message | CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    username: str,
+    lang: str,
+) -> None:
+    """Validate a recipient @username via WATA and advance to the count step."""
+    username = username.strip().lstrip("@")
+    if not _USERNAME_RE.match(username):
+        await _render(event, t("username_invalid", lang), keyboards.ask_username_kb(lang))
+        return
+    try:
+        price = await service.get_star_price(username)
+    except WataError as exc:
+        await _render(
+            event,
+            f"⚠️ {t(exc.message_key(), lang)}\n\n{t('enter_other_username', lang)}",
+            keyboards.ask_username_kb(lang),
+        )
+        return
+
+    await state.update_data(target_username=username, min_price=str(price.min_price))
+    await state.set_state(BuyStates.waiting_count)
+    await _render(event, t("user_found", lang, username=username), keyboards.count_presets(lang))
+
+
+@router.callback_query(BuyStates.waiting_username, F.data == "buy:self")
+async def cb_buy_self(
+    call: CallbackQuery, state: FSMContext, service: OrderService, lang: str
+) -> None:
+    user = call.from_user
+    if not user or not user.username:
+        await call.answer(t("no_username", lang), show_alert=True)
+        return
+    await _set_target_username(call, state, service, user.username, lang)
     await call.answer()
 
 
@@ -139,27 +178,7 @@ async def cb_buy_start(call: CallbackQuery, state: FSMContext, lang: str) -> Non
 async def on_username(
     message: Message, state: FSMContext, service: OrderService, lang: str
 ) -> None:
-    username = (message.text or "").strip().lstrip("@")
-    if not _USERNAME_RE.match(username):
-        await message.answer(
-            t("username_invalid", lang), reply_markup=keyboards.cancel_button(lang)
-        )
-        return
-
-    try:
-        price = await service.get_star_price(username)
-    except WataError as exc:
-        await message.answer(
-            f"⚠️ {t(exc.message_key(), lang)}\n\n{t('enter_other_username', lang)}",
-            reply_markup=keyboards.cancel_button(lang),
-        )
-        return
-
-    await state.update_data(target_username=username, min_price=str(price.min_price))
-    await state.set_state(BuyStates.waiting_count)
-    await message.answer(
-        t("user_found", lang, username=username), reply_markup=keyboards.count_presets(lang)
-    )
+    await _set_target_username(message, state, service, message.text or "", lang)
 
 
 async def _show_quote(

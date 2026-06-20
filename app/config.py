@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     privacy_url: str = (
         "https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-I-OBRABOTKI-PERSONALNYH-DANNYH-06-19"
     )
+    support_url: str = "https://t.me/nnstorecontactbot"
 
     log_level: str = "INFO"
 

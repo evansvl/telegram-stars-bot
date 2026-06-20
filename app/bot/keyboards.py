@@ -25,11 +25,30 @@ def main_menu(lang: str) -> InlineKeyboardMarkup:
     builder.button(text=t("btn_partner", lang), callback_data="partner:show")
     builder.button(text=t("btn_help", lang), callback_data="help:show")
     builder.button(text=t("btn_language", lang), callback_data="lang:choose")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def help_menu(lang: str) -> InlineKeyboardMarkup:
+    """Help hub: legal documents, support contact, and back to the main menu."""
     settings = get_settings()
+    builder = InlineKeyboardBuilder()
     if settings.terms_url:
         builder.button(text=t("btn_terms", lang), url=settings.terms_url)
     if settings.privacy_url:
         builder.button(text=t("btn_privacy", lang), url=settings.privacy_url)
+    if settings.support_url:
+        builder.button(text=t("btn_support", lang), url=settings.support_url)
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def ask_username_kb(lang: str) -> InlineKeyboardMarkup:
+    """Shown while asking for the recipient: buy for myself, or cancel."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_for_myself", lang), callback_data="buy:self")
+    builder.button(text=t("btn_cancel", lang), callback_data="buy:cancel")
     builder.adjust(1)
     return builder.as_markup()
 

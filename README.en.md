@@ -36,7 +36,7 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
 | 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
-| 🧾 | **Order history** | The `/orders` command shows the user's orders with statuses |
+| 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
 | 🤝 | **Referral program** | Referral links: 5% of each invitee's payment, payout via СБП/USDT with admin moderation and proof |
 | 🧩 | **Partner bots** | A partner creates their own bot (Telegram managed bots) inside the bot, sets a markup and earns; all hosted by you (multibot) |
@@ -316,7 +316,7 @@ No. It uses the "Telegram Stars + Acquiring" product: the customer pays via the 
 WATA delivers the stars, and your profit is the built-in margin.
 
 **How do I switch the bot's language?**
-The `/language` command or the "🌐 Язык / Language" menu button. The choice is saved
+The “🌐 Language / Язык” menu button. The choice is saved
 per-user; on first contact the language is detected from the Telegram `language_code`
 (Russian by default).
 
