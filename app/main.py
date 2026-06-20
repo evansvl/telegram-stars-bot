@@ -78,8 +78,8 @@ async def main() -> None:
     await bot.set_my_commands([BotCommand(command="start", description="Меню / Menu")])
 
     # Inject language into every handler; share settings/services via workflow_data.
-    dp.message.middleware(LanguageMiddleware(service))
-    dp.callback_query.middleware(LanguageMiddleware(service))
+    dp.message.middleware(LanguageMiddleware(service, settings))
+    dp.callback_query.middleware(LanguageMiddleware(service, settings))
     dp.include_router(router)
     dp["settings"] = settings
     dp["service"] = service

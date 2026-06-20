@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     telegram_webhook_path: str = "/tg/webhook"
     telegram_webhook_secret: str = ""
 
+    # Reference @username used to quote the displayed "1 ⭐ rate" (cached ~1h).
+    rate_reference_username: str = "hahahahgaha"
+
     # Referral program: reward as a percentage of the referred user's gross payment.
     referral_percent: float = 5.0
     # Minimum payout amount (in RUB) per withdrawal method.

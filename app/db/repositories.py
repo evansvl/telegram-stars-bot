@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -78,6 +78,20 @@ class UserRepository:
 
     async def get_created_at(self, tg_id: int) -> datetime | None:
         return await self._session.scalar(select(User.created_at).where(User.tg_id == tg_id))
+
+    async def get(self, tg_id: int) -> User | None:
+        return await self._session.get(User, tg_id)
+
+    async def is_banned(self, tg_id: int) -> bool:
+        return bool(await self._session.scalar(select(User.banned).where(User.tg_id == tg_id)))
+
+    async def set_banned(self, tg_id: int, banned: bool) -> None:
+        stmt = (
+            pg_insert(User)
+            .values(tg_id=tg_id, banned=banned)
+            .on_conflict_do_update(index_elements=[User.tg_id], set_={"banned": banned})
+        )
+        await self._session.execute(stmt)
 
 
 class ReferralRepository:
@@ -250,6 +264,14 @@ class PartnerBotRepository:
         await self._session.flush()
         return bot
 
+    async def set_active(self, bot_id: int, active: bool) -> PartnerBot | None:
+        bot = await self.get_by_bot_id(bot_id)
+        if bot is None:
+            return None
+        bot.active = active
+        await self._session.flush()
+        return bot
+
 
 class OrderRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -334,6 +356,28 @@ class OrderRepository:
             select(func.coalesce(func.sum(Order.amount), 0)).where(flt)
         )
         return {"orders": int(orders or 0), "stars": int(stars or 0), "spent": Decimal(spent or 0)}
+
+    async def period_stats(self, days: int) -> dict[str, Any]:
+        """Paid totals over the last ``days`` days: orders, stars, revenue, margin."""
+        paid = [OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value]
+        since = datetime.now(tz=UTC) - timedelta(days=days)
+        flt = Order.status.in_(paid) & (Order.created_at >= since)
+        orders = await self._session.scalar(select(func.count()).select_from(Order).where(flt))
+        stars = await self._session.scalar(
+            select(func.coalesce(func.sum(Order.count), 0)).where(flt)
+        )
+        revenue = await self._session.scalar(
+            select(func.coalesce(func.sum(Order.amount), 0)).where(flt)
+        )
+        margin = await self._session.scalar(
+            select(func.coalesce(func.sum(Order.margin), 0)).where(flt)
+        )
+        return {
+            "orders": int(orders or 0),
+            "stars": int(stars or 0),
+            "revenue": Decimal(revenue or 0),
+            "margin": Decimal(margin or 0),
+        }
 
     async def stats(self) -> dict[str, Any]:
         """Aggregate turnover / order count / total margin for paid+ orders."""

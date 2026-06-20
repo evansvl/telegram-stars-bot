@@ -25,7 +25,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKey
 
 from app.bot import keyboards
 from app.bot.i18n import normalize_lang, status_label, t, withdrawal_status_label
-from app.bot.states import AdminWithdrawStates, BuyStates, PartnerStates, WithdrawStates
+from app.bot.states import (
+    AdminStates,
+    AdminWithdrawStates,
+    BuyStates,
+    PartnerStates,
+    WithdrawStates,
+)
 from app.config import Settings
 from app.pricing import MAX_STARS, MIN_STARS, compute_amount, is_valid_count
 from app.services import OrderService, PartnerService, ReferralService, WithdrawalError
@@ -66,12 +72,35 @@ async def _render(
 # ── Entry points ─────────────────────────────────────────────
 
 
+async def _home_view(
+    event: Message | CallbackQuery,
+    service: OrderService,
+    partner: PartnerService,
+    settings: Settings,
+    lang: str,
+) -> tuple[str, object]:
+    """Build the main-menu text (with the 1⭐ rate) and the context-aware keyboard."""
+    user = event.from_user
+    bot_id = event.bot.id if event.bot else 0
+    partner_markup = await partner.partner_markup(bot_id)
+    rate = await service.star_rate(service.markup_percent + float(partner_markup))
+    text = t("welcome", lang)
+    if rate is not None:
+        text += "\n\n" + t("star_rate", lang, rate=rate)
+    is_owner = bool(user) and await partner.owner_of(bot_id) == user.id
+    is_admin = bool(user) and settings.is_admin(user.id)
+    return text, keyboards.main_menu(lang, owner_settings=is_owner, admin=is_admin)
+
+
 @router.message(CommandStart())
 async def cmd_start(
     message: Message,
     state: FSMContext,
     command: CommandObject,
+    service: OrderService,
     referral: ReferralService,
+    partner: PartnerService,
+    settings: Settings,
     lang: str,
 ) -> None:
     await state.clear()
@@ -83,7 +112,8 @@ async def cmd_start(
             referrer_id = 0
         if referrer_id:
             await referral.register_referral(message.from_user.id, referrer_id)
-    await message.answer(t("welcome", lang), reply_markup=keyboards.main_menu(lang))
+    text, kb = await _home_view(message, service, partner, settings, lang)
+    await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data == "help:show")
@@ -93,16 +123,32 @@ async def cb_help(call: CallbackQuery, lang: str) -> None:
 
 
 @router.callback_query(F.data == "menu:show")
-async def cb_menu(call: CallbackQuery, state: FSMContext, lang: str) -> None:
+async def cb_menu(
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    partner: PartnerService,
+    settings: Settings,
+    lang: str,
+) -> None:
     await state.clear()
-    await _render(call, t("welcome", lang), keyboards.main_menu(lang))
+    text, kb = await _home_view(call, service, partner, settings, lang)
+    await _render(call, text, kb)
     await call.answer()
 
 
 @router.callback_query(F.data == "buy:cancel")
-async def cb_cancel(call: CallbackQuery, state: FSMContext, lang: str) -> None:
+async def cb_cancel(
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    partner: PartnerService,
+    settings: Settings,
+    lang: str,
+) -> None:
     await state.clear()
-    await _render(call, t("welcome", lang), keyboards.main_menu(lang))
+    text, kb = await _home_view(call, service, partner, settings, lang)
+    await _render(call, text, kb)
     await call.answer()
 
 
@@ -197,13 +243,18 @@ async def _show_quote(
         await state.clear()
         return
 
-    # On a partner bot, add the partner markup on top of the operator markup
-    # (compute_amount clamps the total to WATA's +50% cap). The partner earns the
-    # difference over what the operator alone would charge.
+    # Admin "topup" sells at the WATA floor (no markup). Otherwise, on a partner
+    # bot, add the partner markup on top of the operator markup (compute_amount
+    # clamps the total to WATA's +50% cap). The partner earns the difference over
+    # what the operator alone would charge.
     min_price = Decimal(str(min_price_raw))
-    operator = service.markup_percent
     bot_id = event.bot.id if event.bot else 0
-    partner_markup = await partner.partner_markup(bot_id)
+    if data.get("no_markup"):
+        operator = 0.0
+        partner_markup = Decimal("0")
+    else:
+        operator = service.markup_percent
+        partner_markup = await partner.partner_markup(bot_id)
     total_markup = operator + float(partner_markup)
 
     quote = compute_amount(min_price, count, total_markup)
@@ -393,6 +444,14 @@ async def _register_partner_webhook(token: str, settings: Settings) -> None:
         await child.session.close()
 
 
+async def _delete_partner_webhook(token: str) -> None:
+    child = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        await child.delete_webhook(drop_pending_updates=False)
+    finally:
+        await child.session.close()
+
+
 @router.callback_query(F.data == "partner:show")
 async def cb_partner_show(call: CallbackQuery, partner: PartnerService, lang: str) -> None:
     if not call.from_user:
@@ -405,11 +464,79 @@ async def cb_partner_show(call: CallbackQuery, partner: PartnerService, lang: st
 
 
 @router.callback_query(F.data == "partner:create")
-async def cb_partner_create(call: CallbackQuery, lang: str) -> None:
+async def cb_partner_create(call: CallbackQuery, partner: PartnerService, lang: str) -> None:
+    if call.from_user and await partner.has_bot(call.from_user.id):
+        await call.answer(t("partner_only_one", lang), show_alert=True)
+        return
     if isinstance(call.message, Message):
         await call.message.answer(
             t("partner_create_prompt", lang), reply_markup=keyboards.partner_create_kb(lang)
         )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("partner:toggle:"))
+async def cb_partner_toggle(
+    call: CallbackQuery, partner: PartnerService, settings: Settings, lang: str
+) -> None:
+    user = call.from_user
+    bot_id = int((call.data or "").split(":")[-1])
+    if not user or await partner.owner_of(bot_id) != user.id:
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    bot = await partner.toggle_bot(bot_id)
+    if bot is None:
+        await call.answer()
+        return
+    try:
+        if bot.active:
+            await _register_partner_webhook(bot.token, settings)
+        else:
+            await _delete_partner_webhook(bot.token)
+    except Exception:
+        logger.exception("failed to update webhook for partner bot %s", bot_id)
+    await call.answer(t("partner_enabled" if bot.active else "partner_disabled", lang))
+    # Re-render the view the toggle was triggered from.
+    if call.bot and call.bot.id == bot_id:
+        status = t("owner_status_on" if bot.active else "owner_status_off", lang)
+        await _render(
+            call,
+            t(
+                "owner_panel",
+                lang,
+                username=bot.username or bot.bot_id,
+                markup=bot.markup_percent,
+                max=partner.max_partner_markup,
+                status=status,
+            ),
+            keyboards.owner_panel(lang, bot.bot_id, bot.active),
+        )
+    else:
+        bots = await partner.list_for_owner(user.id)
+        await _render(call, t("partner_bots_header", lang), keyboards.partner_bots_kb(lang, bots))
+
+
+@router.callback_query(F.data == "owner:settings")
+async def cb_owner_settings(call: CallbackQuery, partner: PartnerService, lang: str) -> None:
+    user = call.from_user
+    bot_id = call.bot.id if call.bot else 0
+    bot = await partner.get_bot(bot_id)
+    if not user or bot is None or bot.owner_tg_id != user.id:
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    status = t("owner_status_on" if bot.active else "owner_status_off", lang)
+    await _render(
+        call,
+        t(
+            "owner_panel",
+            lang,
+            username=bot.username or bot.bot_id,
+            markup=bot.markup_percent,
+            max=partner.max_partner_markup,
+            status=status,
+        ),
+        keyboards.owner_panel(lang, bot.bot_id, bot.active),
+    )
     await call.answer()
 
 
@@ -419,6 +546,9 @@ async def on_managed_bot_created(
 ) -> None:
     created = message.managed_bot_created
     if created is None or not message.from_user:
+        return
+    if await partner.has_bot(message.from_user.id):
+        await message.answer(t("partner_only_one", lang), reply_markup=ReplyKeyboardRemove())
         return
     bot_user = created.bot_user
     try:
@@ -834,6 +964,158 @@ async def cmd_stats(message: Message, service: OrderService, settings: Settings,
             margin=stats["margin"],
         )
     )
+
+
+# ── Admin panel ──────────────────────────────────────────────
+
+
+def _is_admin_call(call: CallbackQuery, settings: Settings) -> bool:
+    return bool(call.from_user and settings.is_admin(call.from_user.id))
+
+
+@router.callback_query(F.data == "admin:show")
+async def cb_admin(call: CallbackQuery, settings: Settings, lang: str) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    await _render(call, t("admin_panel", lang), keyboards.admin_menu(lang))
+    await call.answer()
+
+
+@router.callback_query(F.data == "admin:stats")
+async def cb_admin_stats(
+    call: CallbackQuery, service: OrderService, settings: Settings, lang: str
+) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    d1 = await service.period_stats(1)
+    d3 = await service.period_stats(3)
+    d7 = await service.period_stats(7)
+    d30 = await service.period_stats(30)
+    text = t(
+        "admin_stats",
+        lang,
+        d1_stars=d1["stars"], d1_orders=d1["orders"], d1_revenue=d1["revenue"],
+        d3_stars=d3["stars"], d3_orders=d3["orders"], d3_revenue=d3["revenue"],
+        d7_stars=d7["stars"], d7_orders=d7["orders"], d7_revenue=d7["revenue"],
+        d30_stars=d30["stars"], d30_orders=d30["orders"], d30_revenue=d30["revenue"],
+        d30_margin=d30["margin"],
+    )
+    await _render(call, text, keyboards.admin_menu(lang))
+    await call.answer()
+
+
+@router.callback_query(F.data == "admin:topup")
+async def cb_admin_topup(
+    call: CallbackQuery, state: FSMContext, settings: Settings, lang: str
+) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(BuyStates.waiting_username)
+    await state.update_data(no_markup=True)
+    await _render(call, t("ask_username", lang), keyboards.ask_username_kb(lang))
+    await call.answer()
+
+
+@router.callback_query(F.data == "admin:finduser")
+async def cb_admin_finduser(
+    call: CallbackQuery, state: FSMContext, settings: Settings, lang: str
+) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    await state.set_state(AdminStates.entering_user_id)
+    await _render(call, t("admin_ask_user_id", lang), keyboards.admin_menu(lang))
+    await call.answer()
+
+
+async def _show_admin_user(
+    event: Message | CallbackQuery,
+    service: OrderService,
+    referral: ReferralService,
+    uid: int,
+    lang: str,
+) -> None:
+    user = await service.get_user(uid)
+    if user is None:
+        await _render(event, t("admin_user_not_found", lang), keyboards.admin_menu(lang))
+        return
+    profile = await service.buyer_profile(uid)
+    ov = await referral.overview(uid)
+    status = t("admin_status_banned" if user.banned else "admin_status_active", lang)
+    registered = profile.registered.strftime("%Y-%m-%d") if profile.registered else "—"
+    text = t(
+        "admin_user_profile",
+        lang,
+        id=uid,
+        username=f"@{user.username}" if user.username else "—",
+        registered=registered,
+        status=status,
+        stars=profile.stars,
+        orders=profile.orders,
+        spent=profile.spent,
+        referrals=ov.referrals,
+        earned=ov.earned,
+        available=ov.available,
+    )
+    await _render(event, text, keyboards.admin_user_actions(uid, user.banned, lang))
+
+
+@router.message(AdminStates.entering_user_id, F.text)
+async def on_admin_user_id(
+    message: Message,
+    state: FSMContext,
+    service: OrderService,
+    referral: ReferralService,
+    settings: Settings,
+    lang: str,
+) -> None:
+    if not (message.from_user and settings.is_admin(message.from_user.id)):
+        await state.clear()
+        return
+    raw = (message.text or "").strip()
+    if not raw.lstrip("-").isdigit():
+        await message.answer(t("admin_bad_user_id", lang))
+        return
+    await state.clear()
+    await _show_admin_user(message, service, referral, int(raw), lang)
+
+
+@router.callback_query(F.data.startswith("admin:ban:"))
+async def cb_admin_ban(
+    call: CallbackQuery,
+    service: OrderService,
+    referral: ReferralService,
+    settings: Settings,
+    lang: str,
+) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    uid = int((call.data or "").split(":")[-1])
+    await service.set_banned(uid, True)
+    await call.answer(t("admin_user_banned", lang))
+    await _show_admin_user(call, service, referral, uid, lang)
+
+
+@router.callback_query(F.data.startswith("admin:unban:"))
+async def cb_admin_unban(
+    call: CallbackQuery,
+    service: OrderService,
+    referral: ReferralService,
+    settings: Settings,
+    lang: str,
+) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    uid = int((call.data or "").split(":")[-1])
+    await service.set_banned(uid, False)
+    await call.answer(t("admin_user_unbanned", lang))
+    await _show_admin_user(call, service, referral, uid, lang)
 
 
 @router.message(BuyStates.waiting_username)

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.bot.i18n import DEFAULT_LANG, normalize_lang
@@ -15,6 +16,7 @@ from app.db.models import (
     Order,
     OrderStatusEnum,
     PartnerBot,
+    User,
     Withdrawal,
     WithdrawalMethod,
     WithdrawalStatus,
@@ -108,6 +110,62 @@ class OrderService:
         self._wata = wata
         self._db = db
         self._lang_cache: dict[int, str] = {}
+        self._banned_cache: dict[int, bool] = {}
+        self._rate_min_price: Decimal | None = None
+        self._rate_fetched_at: float = 0.0
+
+    def is_admin(self, tg_id: int) -> bool:
+        return self._settings.is_admin(tg_id)
+
+    # ── Bans ─────────────────────────────────────────────────────
+
+    async def is_banned(self, tg_id: int) -> bool:
+        cached = self._banned_cache.get(tg_id)
+        if cached is not None:
+            return cached
+        async with self._db.session() as session:
+            banned = await UserRepository(session).is_banned(tg_id)
+        self._banned_cache[tg_id] = banned
+        return banned
+
+    async def set_banned(self, tg_id: int, banned: bool) -> None:
+        async with self._db.session() as session:
+            await UserRepository(session).set_banned(tg_id, banned)
+        self._banned_cache[tg_id] = banned
+
+    # ── Admin views ──────────────────────────────────────────────
+
+    async def get_user(self, tg_id: int) -> User | None:
+        async with self._db.session() as session:
+            return await UserRepository(session).get(tg_id)
+
+    async def period_stats(self, days: int) -> dict[str, Any]:
+        async with self._db.session() as session:
+            return await OrderRepository(session).period_stats(days)
+
+    # ── Displayed star rate (cached ~1h) ─────────────────────────
+
+    async def _reference_min_price(self) -> Decimal | None:
+        """Cached minPrice from the reference username; refreshed at most hourly."""
+        fresh = (time.monotonic() - self._rate_fetched_at) < 3600
+        if self._rate_min_price is not None and fresh:
+            return self._rate_min_price
+        try:
+            price = await self._wata.get_star_price(self._settings.rate_reference_username)
+        except Exception:
+            logger.warning("failed to refresh star rate; keeping cached value")
+            return self._rate_min_price
+        self._rate_min_price = price.min_price
+        self._rate_fetched_at = time.monotonic()
+        return self._rate_min_price
+
+    async def star_rate(self, markup_percent: float) -> Decimal | None:
+        """Per-star price a buyer pays at ``markup_percent``: amount(50) / 50."""
+        min_price = await self._reference_min_price()
+        if min_price is None:
+            return None
+        quote = compute_amount(min_price, 50, markup_percent)
+        return (quote.amount / 50).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @property
     def markup_percent(self) -> float:
@@ -568,3 +626,22 @@ class PartnerService:
         async with self._db.session() as session:
             bot = await PartnerBotRepository(session).get_by_bot_id(bot_id)
         return bot.owner_tg_id if bot else None
+
+    async def get_bot(self, bot_id: int) -> PartnerBot | None:
+        async with self._db.session() as session:
+            return await PartnerBotRepository(session).get_by_bot_id(bot_id)
+
+    async def has_bot(self, owner_tg_id: int) -> bool:
+        """True if the owner already has a partner bot (one bot per owner)."""
+        async with self._db.session() as session:
+            bots = await PartnerBotRepository(session).list_for_owner(owner_tg_id)
+        return bool(bots)
+
+    async def toggle_bot(self, bot_id: int) -> PartnerBot | None:
+        """Flip a partner bot's active flag. Returns the updated bot."""
+        async with self._db.session() as session:
+            repo = PartnerBotRepository(session)
+            bot = await repo.get_by_bot_id(bot_id)
+            if bot is None:
+                return None
+            return await repo.set_active(bot_id, not bot.active)

@@ -63,6 +63,7 @@ class User(Base):
     language: Mapped[str | None] = mapped_column(String(2), nullable=True)
     # tg_id of the user who referred this user (set once, on first /start).
     referred_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

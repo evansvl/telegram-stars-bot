@@ -76,6 +76,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "✅ Язык переключён на русский.",
         "en": "✅ Language switched to English.",
     },
+    "star_rate": {
+        "ru": "💱 Курс: 1 ⭐ ≈ <b>{rate} ₽</b>",
+        "en": "💱 Rate: 1 ⭐ ≈ <b>{rate} ₽</b>",
+    },
     "cancelled": {"ru": "Отменено.", "en": "Cancelled."},
     "cancelled_menu": {
         "ru": "Отменено. Возвращаю в меню.",
@@ -473,6 +477,97 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "✅ Наценка для <b>@{username}</b>: <b>{markup}%</b>",
         "en": "✅ Markup for <b>@{username}</b>: <b>{markup}%</b>",
     },
+    "partner_only_one": {
+        "ru": "У вас уже есть бот. Можно создать только одного.",
+        "en": "You already have a bot. Only one is allowed.",
+    },
+    "partner_enabled": {
+        "ru": "▶️ Бот включён.",
+        "en": "▶️ Bot enabled.",
+    },
+    "partner_disabled": {
+        "ru": "⏸ Бот выключен. Он больше не принимает заказы.",
+        "en": "⏸ Bot disabled. It no longer accepts orders.",
+    },
+    "owner_panel": {
+        "ru": (
+            "⚙️ <b>Настройки вашего бота</b>\n\n"
+            "Бот: <b>@{username}</b>\n"
+            "Ваша наценка: <b>{markup}%</b> (макс. {max}%)\n"
+            "Статус: {status}"
+        ),
+        "en": (
+            "⚙️ <b>Your bot settings</b>\n\n"
+            "Bot: <b>@{username}</b>\n"
+            "Your markup: <b>{markup}%</b> (max {max}%)\n"
+            "Status: {status}"
+        ),
+    },
+    "owner_status_on": {"ru": "▶️ включён", "en": "▶️ enabled"},
+    "owner_status_off": {"ru": "⏸ выключен", "en": "⏸ disabled"},
+    # ── Admin panel ───────────────────────────────────────────
+    "admin_panel": {
+        "ru": "🛠 <b>Админ-панель</b>\n\nВыберите раздел:",
+        "en": "🛠 <b>Admin panel</b>\n\nChoose a section:",
+    },
+    "admin_stats": {
+        "ru": (
+            "📊 <b>Продажи (оплачено)</b>\n\n"
+            "За 24 часа: <b>{d1_stars}</b> ⭐, {d1_orders} зак., {d1_revenue} ₽\n"
+            "За 3 дня: <b>{d3_stars}</b> ⭐, {d3_orders} зак., {d3_revenue} ₽\n"
+            "За 7 дней: <b>{d7_stars}</b> ⭐, {d7_orders} зак., {d7_revenue} ₽\n"
+            "За 30 дней: <b>{d30_stars}</b> ⭐, {d30_orders} зак., {d30_revenue} ₽\n\n"
+            "Маржа за 30 дней: <b>{d30_margin} ₽</b>"
+        ),
+        "en": (
+            "📊 <b>Sales (paid)</b>\n\n"
+            "24 hours: <b>{d1_stars}</b> ⭐, {d1_orders} orders, {d1_revenue} ₽\n"
+            "3 days: <b>{d3_stars}</b> ⭐, {d3_orders} orders, {d3_revenue} ₽\n"
+            "7 days: <b>{d7_stars}</b> ⭐, {d7_orders} orders, {d7_revenue} ₽\n"
+            "30 days: <b>{d30_stars}</b> ⭐, {d30_orders} orders, {d30_revenue} ₽\n\n"
+            "Margin (30 days): <b>{d30_margin} ₽</b>"
+        ),
+    },
+    "admin_ask_user_id": {
+        "ru": "Отправьте Telegram ID пользователя:",
+        "en": "Send the user's Telegram ID:",
+    },
+    "admin_bad_user_id": {
+        "ru": "Нужен числовой ID. Попробуйте ещё раз:",
+        "en": "A numeric ID is required. Try again:",
+    },
+    "admin_user_not_found": {
+        "ru": "Пользователь не найден.",
+        "en": "User not found.",
+    },
+    "admin_user_profile": {
+        "ru": (
+            "👤 <b>Пользователь</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "Username: {username}\n"
+            "📅 Регистрация: {registered}\n"
+            "Статус: {status}\n\n"
+            "⭐ Куплено: <b>{stars}</b> ({orders} зак.)\n"
+            "💸 Потрачено: <b>{spent} ₽</b>\n"
+            "🤝 Приглашено: <b>{referrals}</b>\n"
+            "💰 Заработано: <b>{earned} ₽</b> (доступно {available} ₽)"
+        ),
+        "en": (
+            "👤 <b>User</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "Username: {username}\n"
+            "📅 Registered: {registered}\n"
+            "Status: {status}\n\n"
+            "⭐ Bought: <b>{stars}</b> ({orders} orders)\n"
+            "💸 Spent: <b>{spent} ₽</b>\n"
+            "🤝 Invited: <b>{referrals}</b>\n"
+            "💰 Earned: <b>{earned} ₽</b> (available {available} ₽)"
+        ),
+    },
+    "admin_status_active": {"ru": "✅ активен", "en": "✅ active"},
+    "admin_status_banned": {"ru": "🚫 забанен", "en": "🚫 banned"},
+    "admin_user_banned": {"ru": "🚫 Пользователь забанен.", "en": "🚫 User banned."},
+    "admin_user_unbanned": {"ru": "✅ Пользователь разбанен.", "en": "✅ User unbanned."},
     # ── Status labels ─────────────────────────────────────────
     "status_New": {"ru": "🆕 создаётся", "en": "🆕 creating"},
     "status_Pending": {"ru": "⏳ ожидает оплаты", "en": "⏳ awaiting payment"},
@@ -557,6 +652,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "@{username} — задать наценку",
         "en": "@{username} — set markup",
     },
+    "btn_set_markup": {"ru": "💰 Задать наценку", "en": "💰 Set markup"},
+    "btn_partner_disable": {"ru": "⏸ Выключить", "en": "⏸ Disable"},
+    "btn_partner_enable": {"ru": "▶️ Включить", "en": "▶️ Enable"},
+    "btn_owner_settings": {"ru": "⚙️ Настройки бота", "en": "⚙️ Bot settings"},
+    "btn_admin": {"ru": "🛠 Админка", "en": "🛠 Admin"},
+    "btn_admin_stats": {"ru": "📊 Статистика", "en": "📊 Stats"},
+    "btn_admin_finduser": {"ru": "🔍 Найти пользователя", "en": "🔍 Find user"},
+    "btn_admin_topup": {"ru": "⭐ Пополнить без наценки", "en": "⭐ Top up (no markup)"},
+    "btn_ban": {"ru": "🚫 Забанить", "en": "🚫 Ban"},
+    "btn_unban": {"ru": "✅ Разбанить", "en": "✅ Unban"},
     "btn_withdraw": {"ru": "💸 Вывести средства", "en": "💸 Withdraw"},
     "btn_withdrawals": {"ru": "📜 Мои выводы", "en": "📜 My withdrawals"},
     "btn_method_sbp": {"ru": "🏦 СБП", "en": "🏦 СБП"},
