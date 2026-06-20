@@ -90,7 +90,12 @@ async def main() -> None:
 
     # One aiohttp app serves WATA hooks, /health and Telegram updates.
     app = build_webhook_app(
-        settings=settings, service=service, referral=referral, bot=bot, verifier=verifier
+        settings=settings,
+        service=service,
+        referral=referral,
+        partner=partner,
+        bot=bot,
+        verifier=verifier,
     )
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=tg_secret).register(
         app, path=settings.telegram_webhook_path

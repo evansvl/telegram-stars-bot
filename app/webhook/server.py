@@ -12,12 +12,15 @@ import logging
 from typing import Any
 
 from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiohttp import web
 
+from app.bot import keyboards
 from app.bot.i18n import t
 from app.config import Settings
 from app.db.models import OrderStatusEnum
-from app.services import OrderService, ReferralService
+from app.services import OrderService, PartnerService, ReferralService
 from app.wata.signature import SignatureVerifier
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,8 @@ _NOTIFY_KEYS = {
     OrderStatusEnum.REFUNDED.value: "notify_Refunded",
     OrderStatusEnum.FAIL.value: "notify_Fail",
 }
+
+_SUCCESS_STATUSES = {OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value}
 
 
 def _extract_order_id(payload: dict[str, Any]) -> str | None:
@@ -44,6 +49,7 @@ async def _handle_webhook(request: web.Request) -> web.Response:
     verifier: SignatureVerifier = request.app["verifier"]
     service: OrderService = request.app["service"]
     referral: ReferralService = request.app["referral"]
+    partner: PartnerService = request.app["partner"]
     bot: Bot = request.app["bot"]
 
     body = await request.read()
@@ -88,10 +94,31 @@ async def _handle_webhook(request: web.Request) -> web.Response:
     notify_key = _NOTIFY_KEYS.get(order.status)
     if notify_key:
         lang = await service.get_user_language(order.buyer_tg_id)
+        success = order.status in _SUCCESS_STATUSES
+        # Partner-bot orders must be notified through the partner's bot, not ours.
+        target_bot = bot
+        if order.bot_id and order.bot_id != bot.id:
+            pbot = await partner.get_bot(order.bot_id)
+            if pbot:
+                target_bot = Bot(
+                    pbot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+                )
         try:
-            await bot.send_message(order.buyer_tg_id, t(notify_key, lang))
+            # On success, delete the order message to keep the chat clean.
+            if success and order.chat_id and order.message_id:
+                try:
+                    await target_bot.delete_message(order.chat_id, order.message_id)
+                except Exception:
+                    logger.debug("could not delete order message order_id=%s", order.order_id)
+            markup = keyboards.success_menu(lang) if success else keyboards.main_menu(lang)
+            await target_bot.send_message(
+                order.buyer_tg_id, t(notify_key, lang), reply_markup=markup
+            )
         except Exception:
             logger.exception("failed to notify buyer tg_id=%s", order.buyer_tg_id)
+        finally:
+            if target_bot is not bot:
+                await target_bot.session.close()
 
     # Credit the buyer's referrer (idempotent) and notify them of the reward.
     credited = await referral.credit_for_order(order)
@@ -117,6 +144,7 @@ def build_webhook_app(
     settings: Settings,
     service: OrderService,
     referral: ReferralService,
+    partner: PartnerService,
     bot: Bot,
     verifier: SignatureVerifier,
 ) -> web.Application:
@@ -124,6 +152,7 @@ def build_webhook_app(
     app["settings"] = settings
     app["service"] = service
     app["referral"] = referral
+    app["partner"] = partner
     app["bot"] = bot
     app["verifier"] = verifier
     app.router.add_post(settings.webhook_path, _handle_webhook)

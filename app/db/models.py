@@ -102,6 +102,11 @@ class Order(Base):
     payment_link: Mapped[str | None] = mapped_column(String(512), nullable=True)
     raw_webhook: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # The bot/chat/message of the order message, so it can be deleted on success.
+    bot_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    message_id: Mapped[int | None] = mapped_column(nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

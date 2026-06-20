@@ -288,6 +288,9 @@ class OrderRepository:
         status: str = OrderStatusEnum.NEW.value,
         partner_owner_tg_id: int | None = None,
         partner_earning: Decimal = Decimal("0"),
+        bot_id: int | None = None,
+        chat_id: int | None = None,
+        message_id: int | None = None,
     ) -> Order:
         order = Order(
             order_id=order_id,
@@ -298,6 +301,9 @@ class OrderRepository:
             status=status,
             partner_owner_tg_id=partner_owner_tg_id,
             partner_earning=partner_earning,
+            bot_id=bot_id,
+            chat_id=chat_id,
+            message_id=message_id,
         )
         self._session.add(order)
         await self._session.flush()

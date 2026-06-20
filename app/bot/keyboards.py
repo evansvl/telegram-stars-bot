@@ -121,6 +121,15 @@ def test_payment(order_id: str, lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def success_menu(lang: str) -> InlineKeyboardMarkup:
+    """Shown after a successful payment: buy again, or back to the menu."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_buy_again", lang), callback_data="buy:start")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def retry_buy(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_retry", lang), callback_data="buy:start")

@@ -325,6 +325,8 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
     user = call.from_user
     partner_owner = data.get("partner_owner")
     partner_earning = Decimal(str(data.get("partner_earning", "0")))
+    # Remember the order message so the payment webhook can delete it on success.
+    msg = call.message if isinstance(call.message, Message) else None
     try:
         created = await service.create_order(
             buyer_tg_id=user.id,
@@ -334,6 +336,9 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, service: OrderService, 
             amount=Decimal(str(amount)),
             partner_owner_tg_id=int(partner_owner) if partner_owner else None,
             partner_earning=partner_earning,
+            bot_id=call.bot.id if call.bot else None,
+            chat_id=msg.chat.id if msg else None,
+            message_id=msg.message_id if msg else None,
         )
     except WataError as exc:
         await _render(call, f"⚠️ {t(exc.message_key(), lang)}", keyboards.retry_buy(lang))
@@ -377,7 +382,7 @@ async def cb_testpay(
     await call.answer()
     if order is None:
         return
-    await _render(call, t("test_paid_done", lang), keyboards.main_menu(lang))
+    await _render(call, t("test_paid_done", lang), keyboards.success_menu(lang))
     credited = await referral.credit_for_order(order)
     if credited:
         referrer_id, reward = credited

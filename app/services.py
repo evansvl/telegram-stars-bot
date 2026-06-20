@@ -221,6 +221,9 @@ class OrderService:
         amount: Decimal,
         partner_owner_tg_id: int | None = None,
         partner_earning: Decimal = Decimal("0"),
+        bot_id: int | None = None,
+        chat_id: int | None = None,
+        message_id: int | None = None,
     ) -> CreatedOrder:
         """Create a WATA order and persist it. Returns the payment link."""
         order_id = uuid.uuid4().hex
@@ -238,6 +241,9 @@ class OrderService:
                 status=OrderStatusEnum.NEW.value,
                 partner_owner_tg_id=partner_owner_tg_id,
                 partner_earning=partner_earning,
+                bot_id=bot_id,
+                chat_id=chat_id,
+                message_id=message_id,
             )
 
         # Test mode: no WATA call, no payment link. The order waits for a simulated
