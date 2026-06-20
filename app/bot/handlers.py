@@ -426,11 +426,13 @@ def _fmt_percent(value: float) -> str:
     return str(int(value)) if value == int(value) else str(value)
 
 
-@router.callback_query(F.data == "ref:show")
+@router.callback_query(F.data.startswith("ref:show"))
 async def cb_referral(call: CallbackQuery, referral: ReferralService, lang: str) -> None:
     if not call.from_user:
         await call.answer()
         return
+    # Opened from the profile -> back to profile; from the main menu -> back home.
+    back_data = "profile:show" if (call.data or "").endswith(":profile") else "menu:show"
     ov = await referral.overview(call.from_user.id)
     text = t(
         "referral_overview",
@@ -442,7 +444,9 @@ async def cb_referral(call: CallbackQuery, referral: ReferralService, lang: str)
         available=ov.available,
     )
     can_withdraw = ov.available > 0 and not ov.has_pending
-    await _render(call, text, keyboards.referral_menu(lang, can_withdraw=can_withdraw))
+    await _render(
+        call, text, keyboards.referral_menu(lang, can_withdraw=can_withdraw, back_data=back_data)
+    )
     await call.answer()
 
 

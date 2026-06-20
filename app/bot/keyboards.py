@@ -40,7 +40,7 @@ def profile_menu(lang: str) -> InlineKeyboardMarkup:
     """Profile hub: order history, referral program, back to the main menu."""
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_order_history", lang), callback_data="orders:list")
-    builder.button(text=t("btn_referral", lang), callback_data="ref:show")
+    builder.button(text=t("btn_referral", lang), callback_data="ref:show:profile")
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")
     builder.adjust(1)
     return builder.as_markup()
@@ -138,12 +138,19 @@ def retry_buy(lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def referral_menu(lang: str, *, can_withdraw: bool) -> InlineKeyboardMarkup:
+def referral_menu(
+    lang: str, *, can_withdraw: bool, back_data: str = "menu:show"
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if can_withdraw:
         builder.button(text=t("btn_withdraw", lang), callback_data="wd:start")
     builder.button(text=t("btn_withdrawals", lang), callback_data="wd:list")
-    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    # Context-aware back: to the parent it was opened from, plus home if different.
+    if back_data == "menu:show":
+        builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    else:
+        builder.button(text=t("btn_back", lang), callback_data=back_data)
+        builder.button(text=t("btn_menu", lang), callback_data="menu:show")
     builder.adjust(1)
     return builder.as_markup()
 
