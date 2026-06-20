@@ -155,7 +155,7 @@ async def cb_cancel(
 
 @router.callback_query(F.data == "lang:choose")
 async def cb_language_choose(call: CallbackQuery, lang: str) -> None:
-    await _render(call, t("choose_language", lang), keyboards.language_picker())
+    await _render(call, t("choose_language", lang), keyboards.language_picker(lang))
     await call.answer()
 
 
@@ -705,7 +705,7 @@ async def cb_withdrawals(call: CallbackQuery, referral: ReferralService, lang: s
                 )
             )
         text = "\n".join(lines)
-    await _render(call, text, keyboards.referral_menu(lang, can_withdraw=False))
+    await _render(call, text, keyboards.withdrawals_menu(lang))
     await call.answer()
 
 
@@ -946,7 +946,7 @@ async def cb_admin_stats(
         d30_stars=d30["stars"], d30_orders=d30["orders"], d30_revenue=d30["revenue"],
         d30_margin=d30["margin"],
     )
-    await _render(call, text, keyboards.admin_menu(lang))
+    await _render(call, text, keyboards.admin_back(lang))
     await call.answer()
 
 
@@ -972,7 +972,7 @@ async def cb_admin_finduser(
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await state.set_state(AdminStates.entering_user_id)
-    await _render(call, t("admin_ask_user_id", lang), keyboards.admin_menu(lang))
+    await _render(call, t("admin_ask_user_id", lang), keyboards.admin_back(lang))
     await call.answer()
 
 

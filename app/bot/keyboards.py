@@ -148,6 +148,15 @@ def referral_menu(lang: str, *, can_withdraw: bool) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def withdrawals_menu(lang: str) -> InlineKeyboardMarkup:
+    """Withdrawal history view: back to the referral menu, or home."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_back", lang), callback_data="ref:show")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def withdraw_methods(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_method_sbp", lang), callback_data="wd:method:sbp")
@@ -211,6 +220,7 @@ def partner_bots_kb(lang: str, bots: list) -> InlineKeyboardMarkup:
         toggle_key = "btn_partner_disable" if b.active else "btn_partner_enable"
         label = f"@{b.username or b.bot_id} — " + t(toggle_key, lang)
         builder.button(text=label, callback_data=f"partner:toggle:{b.bot_id}")
+    builder.button(text=t("btn_back", lang), callback_data="partner:show")
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")
     builder.adjust(1)
     return builder.as_markup()
@@ -236,6 +246,15 @@ def admin_menu(lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def admin_back(lang: str) -> InlineKeyboardMarkup:
+    """Back to the admin panel, or home — for admin sub-views."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_back", lang), callback_data="admin:show")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def admin_user_actions(uid: int, banned: bool, lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if banned:
@@ -247,9 +266,10 @@ def admin_user_actions(uid: int, banned: bool, lang: str) -> InlineKeyboardMarku
     return builder.as_markup()
 
 
-def language_picker() -> InlineKeyboardMarkup:
+def language_picker(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for code in SUPPORTED_LANGS:
         builder.button(text=LANGUAGE_NAMES[code], callback_data=f"lang:set:{code}")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
     builder.adjust(1)
     return builder.as_markup()

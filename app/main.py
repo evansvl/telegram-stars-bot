@@ -16,6 +16,7 @@ import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import (
@@ -61,7 +62,10 @@ async def main() -> None:
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    storage = RedisStorage.from_url(settings.redis_url)
+    # with_bot_id keeps FSM state separate per bot (main bot vs each partner bot).
+    storage = RedisStorage.from_url(
+        settings.redis_url, key_builder=DefaultKeyBuilder(with_bot_id=True)
+    )
     dp = Dispatcher(storage=storage)
 
     wata = WataClient(settings.wata_base_url, settings.wata_token, session)

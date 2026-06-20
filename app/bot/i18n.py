@@ -680,6 +680,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_retry": {"ru": "🔁 Попробовать снова", "en": "🔁 Try again"},
     "btn_buy_again": {"ru": "⭐ Купить ещё", "en": "⭐ Buy again"},
     "btn_menu": {"ru": "🏠 В меню", "en": "🏠 Menu"},
+    "btn_back": {"ru": "⬅️ Назад", "en": "⬅️ Back"},
 }
 
 
