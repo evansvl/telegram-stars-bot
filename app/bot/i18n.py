@@ -418,18 +418,17 @@ TEXTS: dict[str, dict[str, str]] = {
             "🧩 <b>Партнёрам: свой бот</b>\n\n"
             "Создайте собственного бота для продажи звёзд — он работает на нашей "
             "инфраструктуре, платежи и выдача звёзд на нашей стороне.\n\n"
-            "Вы задаёте свою наценку (до <b>{max}%</b>) поверх базовой цены и "
-            "получаете её с каждой продажи. Доход копится на общий баланс и выводится "
-            "в разделе «Партнёрка».\n\n"
+            "Вы получаете комиссию <b>{commission}%</b> с каждой продажи через вашего "
+            "бота. Доход копится на общий баланс и выводится в разделе «Партнёрка».\n\n"
             "Ваших ботов: <b>{count}</b>"
         ),
         "en": (
             "🧩 <b>Partners: your own bot</b>\n\n"
             "Create your own Stars-selling bot — it runs on our infrastructure, with "
             "payments and delivery on our side.\n\n"
-            "You set your own markup (up to <b>{max}%</b>) on top of the base price and "
-            "earn it on every sale. Earnings accrue to your shared balance and are paid "
-            "out in the “Referrals” section.\n\n"
+            "You earn a <b>{commission}%</b> commission on every sale through your bot. "
+            "Earnings accrue to your shared balance and are paid out in the “Referrals” "
+            "section.\n\n"
             "Your bots: <b>{count}</b>"
         ),
     },
@@ -493,13 +492,13 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": (
             "⚙️ <b>Настройки вашего бота</b>\n\n"
             "Бот: <b>@{username}</b>\n"
-            "Ваша наценка: <b>{markup}%</b> (макс. {max}%)\n"
+            "Ваша комиссия: <b>{commission}%</b> с каждой продажи\n"
             "Статус: {status}"
         ),
         "en": (
             "⚙️ <b>Your bot settings</b>\n\n"
             "Bot: <b>@{username}</b>\n"
-            "Your markup: <b>{markup}%</b> (max {max}%)\n"
+            "Your commission: <b>{commission}%</b> per sale\n"
             "Status: {status}"
         ),
     },

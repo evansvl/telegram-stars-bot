@@ -31,38 +31,42 @@ def main() -> None:
     p.add_argument("--price", type=Decimal, required=True, help="WATA purchase price for the order")
     p.add_argument("--commission", type=Decimal, required=True, help="WATA commission")
     p.add_argument("--referral", type=Decimal, default=Decimal("5"), help="referral percent")
+    p.add_argument("--partner", type=Decimal, default=Decimal("10"), help="partner commission pct")
     p.add_argument("--operator", type=Decimal, default=Decimal("20"), help="your markup percent")
     a = p.parse_args()
 
     min_total = a.min_price * a.count
     cost = a.price + a.commission
-    r = a.referral / Decimal("100")
+    # An order pays exactly one earner: the partner commission OR the 5% referral.
+    # The binding constraint for "no loss" is the larger of the two.
+    worst = max(a.referral, a.partner) / Decimal("100")
 
     break_even = (cost / min_total - 1) * 100
-    safe = (cost / (1 - r) / min_total - 1) * 100
+    safe = (cost / (1 - worst) / min_total - 1) * 100
 
     amount = min_total * (1 + a.operator / 100)
     margin = amount - cost
-    margin_after_ref = margin - amount * r
-    partner_cap = max(Decimal("0"), Decimal("50") - a.operator)
+    margin_after_ref = margin - amount * a.referral / 100
+    margin_after_partner = margin - amount * a.partner / 100
 
     print(f"min_total (minPrice*count) : {_pct(min_total)} RUB")
     print(f"cost (price + commission)  : {_pct(cost)} RUB")
     print(f"WATA commission of amount  : {_pct(a.commission / amount * 100)}%")
-    print("-" * 48)
+    print("-" * 52)
     print(f"break-even markup          : {_pct(max(Decimal('0'), break_even))}%")
-    print(f"safe markup (no loss w/ {a.referral}% ref): {_pct(max(Decimal('0'), safe))}%")
-    print("-" * 48)
+    print(f"safe markup (no loss, worst of ref/partner): {_pct(max(Decimal('0'), safe))}%")
+    print("-" * 52)
     print(f"at operator markup {a.operator}%:")
     print(f"  buyer pays (amount)      : {_pct(amount)} RUB")
     print(f"  margin                   : {_pct(margin)} RUB")
-    print(f"  margin after {a.referral}% referral : {_pct(margin_after_ref)} RUB"
+    print(f"  after {a.referral}% referral       : {_pct(margin_after_ref)} RUB"
           + ("  <-- LOSS" if margin_after_ref < 0 else ""))
-    print(f"  partner markup cap       : {_pct(partner_cap)}% (50% - operator)")
-    print("-" * 48)
-    print("Note: partner markup is self-funding - the buyer pays it on top, so it")
-    print("never reduces your margin. Each order pays exactly one earner (partner")
-    print("OR 5% referrer), so multi-level invites cannot compound payouts.")
+    print(f"  after {a.partner}% partner cut   : {_pct(margin_after_partner)} RUB"
+          + ("  <-- LOSS" if margin_after_partner < 0 else ""))
+    print("-" * 52)
+    print("Note: both the referral and the partner commission are paid OUT OF your")
+    print("margin. Each order pays exactly one earner (partner OR referrer), so")
+    print("multi-level invites cannot compound payouts.")
 
 
 if __name__ == "__main__":

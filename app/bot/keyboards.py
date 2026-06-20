@@ -198,24 +198,18 @@ def partner_create_kb(lang: str) -> ReplyKeyboardMarkup:
 
 def partner_bots_kb(lang: str, bots: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    rows: list[int] = []
     for b in bots:
-        builder.button(
-            text=t("btn_partner_set_markup", lang, username=b.username or b.bot_id),
-            callback_data=f"partner:setmarkup:{b.bot_id}",
-        )
         toggle_key = "btn_partner_disable" if b.active else "btn_partner_enable"
-        builder.button(text=t(toggle_key, lang), callback_data=f"partner:toggle:{b.bot_id}")
-        rows.append(2)
+        label = f"@{b.username or b.bot_id} — " + t(toggle_key, lang)
+        builder.button(text=label, callback_data=f"partner:toggle:{b.bot_id}")
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")
-    builder.adjust(*rows, 1)
+    builder.adjust(1)
     return builder.as_markup()
 
 
 def owner_panel(lang: str, bot_id: int, active: bool) -> InlineKeyboardMarkup:
     """Settings shown to a partner inside their own bot."""
     builder = InlineKeyboardBuilder()
-    builder.button(text=t("btn_set_markup", lang), callback_data=f"partner:setmarkup:{bot_id}")
     toggle_key = "btn_partner_disable" if active else "btn_partner_enable"
     builder.button(text=t(toggle_key, lang), callback_data=f"partner:toggle:{bot_id}")
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")

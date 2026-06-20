@@ -29,7 +29,6 @@ from app.bot.states import (
     AdminStates,
     AdminWithdrawStates,
     BuyStates,
-    PartnerStates,
     WithdrawStates,
 )
 from app.config import Settings
@@ -82,8 +81,7 @@ async def _home_view(
     """Build the main-menu text (with the 1⭐ rate) and the context-aware keyboard."""
     user = event.from_user
     bot_id = event.bot.id if event.bot else 0
-    partner_markup = await partner.partner_markup(bot_id)
-    rate = await service.star_rate(service.markup_percent + float(partner_markup))
+    rate = await service.star_rate(service.markup_percent)
     text = t("welcome", lang)
     if rate is not None:
         text += "\n\n" + t("star_rate", lang, rate=rate)
@@ -243,26 +241,16 @@ async def _show_quote(
         await state.clear()
         return
 
-    # Admin "topup" sells at the WATA floor (no markup). Otherwise, on a partner
-    # bot, add the partner markup on top of the operator markup (compute_amount
-    # clamps the total to WATA's +50% cap). The partner earns the difference over
-    # what the operator alone would charge.
+    # Buyers always pay the operator's normal price (admin "topup" pays the WATA
+    # floor). On a partner bot the owner earns a fixed commission of the sale.
     min_price = Decimal(str(min_price_raw))
     bot_id = event.bot.id if event.bot else 0
-    if data.get("no_markup"):
-        operator = 0.0
-        partner_markup = Decimal("0")
-    else:
-        operator = service.markup_percent
-        partner_markup = await partner.partner_markup(bot_id)
-    total_markup = operator + float(partner_markup)
+    no_markup = bool(data.get("no_markup"))
+    operator = 0.0 if no_markup else service.markup_percent
 
-    quote = compute_amount(min_price, count, total_markup)
-    operator_amount = compute_amount(min_price, count, operator).amount
-    partner_earning = quote.amount - operator_amount
-    if partner_earning < 0:
-        partner_earning = Decimal("0")
-    partner_owner = await partner.owner_of(bot_id) if partner_earning > 0 else None
+    quote = compute_amount(min_price, count, operator)
+    partner_owner = None if no_markup else await partner.owner_of(bot_id)
+    partner_earning = partner.earning_for(quote.amount) if partner_owner else Decimal("0")
 
     await state.update_data(
         count=count,
@@ -458,9 +446,20 @@ async def cb_partner_show(call: CallbackQuery, partner: PartnerService, lang: st
         await call.answer()
         return
     bots = await partner.list_for_owner(call.from_user.id)
-    text = t("partner_overview", lang, max=partner.max_partner_markup, count=len(bots))
+    text = t("partner_overview", lang, commission=partner.commission_percent, count=len(bots))
     await _render(call, text, keyboards.partner_menu(lang, has_bots=bool(bots)))
     await call.answer()
+
+
+def _owner_panel_text(partner: PartnerService, bot, lang: str) -> str:
+    status = t("owner_status_on" if bot.active else "owner_status_off", lang)
+    return t(
+        "owner_panel",
+        lang,
+        username=bot.username or bot.bot_id,
+        commission=partner.commission_percent,
+        status=status,
+    )
 
 
 @router.callback_query(F.data == "partner:create")
@@ -498,17 +497,9 @@ async def cb_partner_toggle(
     await call.answer(t("partner_enabled" if bot.active else "partner_disabled", lang))
     # Re-render the view the toggle was triggered from.
     if call.bot and call.bot.id == bot_id:
-        status = t("owner_status_on" if bot.active else "owner_status_off", lang)
         await _render(
             call,
-            t(
-                "owner_panel",
-                lang,
-                username=bot.username or bot.bot_id,
-                markup=bot.markup_percent,
-                max=partner.max_partner_markup,
-                status=status,
-            ),
+            _owner_panel_text(partner, bot, lang),
             keyboards.owner_panel(lang, bot.bot_id, bot.active),
         )
     else:
@@ -524,17 +515,9 @@ async def cb_owner_settings(call: CallbackQuery, partner: PartnerService, lang: 
     if not user or bot is None or bot.owner_tg_id != user.id:
         await call.answer(t("admin_only", lang), show_alert=True)
         return
-    status = t("owner_status_on" if bot.active else "owner_status_off", lang)
     await _render(
         call,
-        t(
-            "owner_panel",
-            lang,
-            username=bot.username or bot.bot_id,
-            markup=bot.markup_percent,
-            max=partner.max_partner_markup,
-            status=status,
-        ),
+        _owner_panel_text(partner, bot, lang),
         keyboards.owner_panel(lang, bot.bot_id, bot.active),
     )
     await call.answer()
@@ -586,57 +569,6 @@ async def cb_partner_list(call: CallbackQuery, partner: PartnerService, lang: st
     else:
         await _render(call, t("partner_bots_header", lang), keyboards.partner_bots_kb(lang, bots))
     await call.answer()
-
-
-@router.callback_query(F.data.startswith("partner:setmarkup:"))
-async def cb_partner_setmarkup(
-    call: CallbackQuery, state: FSMContext, partner: PartnerService, lang: str
-) -> None:
-    if not call.from_user:
-        await call.answer()
-        return
-    bot_id = int((call.data or "").split(":")[-1])
-    await state.set_state(PartnerStates.entering_markup)
-    await state.update_data(markup_bot_id=bot_id)
-    await _render(
-        call,
-        t("partner_ask_markup", lang, max=partner.max_partner_markup),
-        keyboards.cancel_button(lang, data="menu:show"),
-    )
-    await call.answer()
-
-
-@router.message(PartnerStates.entering_markup, F.text)
-async def on_partner_markup(
-    message: Message, state: FSMContext, partner: PartnerService, lang: str
-) -> None:
-    raw = (message.text or "").strip().replace(",", ".").replace("%", "")
-    try:
-        markup = Decimal(raw)
-    except (InvalidOperation, ValueError):
-        await message.answer(t("partner_markup_invalid", lang, max=partner.max_partner_markup))
-        return
-    if markup < 0 or markup > partner.max_partner_markup:
-        await message.answer(t("partner_markup_invalid", lang, max=partner.max_partner_markup))
-        return
-    data = await state.get_data()
-    bot_id = int(data.get("markup_bot_id", 0))
-    bot = await partner.set_markup(bot_id, markup)
-    await state.clear()
-    if bot is None:
-        await message.answer(
-            t("partner_create_failed", lang), reply_markup=keyboards.main_menu(lang)
-        )
-        return
-    await message.answer(
-        t(
-            "partner_markup_set",
-            lang,
-            username=bot.username or bot.bot_id,
-            markup=bot.markup_percent,
-        ),
-        reply_markup=keyboards.main_menu(lang),
-    )
 
 
 # ── Withdrawals (user) ───────────────────────────────────────

@@ -39,7 +39,7 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 | 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
 | 🤝 | **Referral program** | Referral links: 5% of each invitee's payment, payout via СБП/USDT with admin moderation and proof |
-| 🧩 | **Partner bots** | A partner creates their own bot (Telegram managed bots) inside the bot, sets a markup and earns; all hosted by you (multibot) |
+| 🧩 | **Partner bots** | A partner creates their own bot (Telegram managed bots) inside the bot and earns a fixed commission (`PARTNER_COMMISSION_PERCENT`) on sales; all hosted by you (multibot) |
 | 🧪 | **Test mode** | `TEST_MODE=true` — a "paid" button instead of WATA to exercise the referral/partner mechanics |
 | 🌐 | **Two languages** | Russian and English interface, switch with a button |
 | 🪝 | **Webhook mode** | Both Telegram and WATA run over webhooks — one HTTP server behind your reverse proxy |

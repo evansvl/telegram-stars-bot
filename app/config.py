@@ -65,6 +65,9 @@ class Settings(BaseSettings):
 
     # Referral program: reward as a percentage of the referred user's gross payment.
     referral_percent: float = 5.0
+    # Partner bots: commission the partner earns on each sale through their bot
+    # (% of the gross amount). Buyers pay the normal price; this comes from margin.
+    partner_commission_percent: float = 10.0
     # Minimum payout amount (in RUB) per withdrawal method.
     withdraw_min_sbp: Decimal = Decimal("500")
     withdraw_min_crypto: Decimal = Decimal("1000")

@@ -23,9 +23,5 @@ class AdminWithdrawStates(StatesGroup):
     waiting_reject_reason = State()
 
 
-class PartnerStates(StatesGroup):
-    entering_markup = State()
-
-
 class AdminStates(StatesGroup):
     entering_user_id = State()

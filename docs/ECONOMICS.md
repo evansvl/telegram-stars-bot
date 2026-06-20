@@ -28,10 +28,13 @@ of the amount.
 
 1. **Operator markup (`MARKUP_PERCENT`)** — your own margin. Set on the server.
 2. **Referral 5% (`REFERRAL_PERCENT`)** — paid to a referrer **out of your
-   margin** when a referred user pays. This is the only payout that can cause a
-   loss if your markup is too thin.
-3. **Partner markup** — added by a partner **on top of** your markup. The buyer
-   pays it; it does **not** come out of your margin. Self-funding → no loss.
+   margin** when a referred user pays.
+3. **Partner commission (`PARTNER_COMMISSION_PERCENT`, default 10%)** — paid to a
+   partner-bot owner **out of your margin** on every sale through their bot.
+   Buyers on a partner bot pay the *same* price as on your main bot.
+
+Both 2 and 3 come out of your margin, so your markup must be thick enough to
+cover the larger of the two. An order never pays both (see below).
 
 ## Key results
 
@@ -39,31 +42,26 @@ of the amount.
   bare minimum (`amount = minPrice*count`) actually loses the commission. You need
   ~1–2% markup just to cover it (it varies per order — run the calculator).
 
-- **Safe markup with the 5% referral**: you keep money on a referred sale only if
-  `amount*(1 − 5%) ≥ price + commission`. For the sample numbers that's ≈ **6.6%**.
-  Anything above that and the referral never costs you money.
+- **Safe markup**: you keep money only if `amount*(1 − p) ≥ price + commission`,
+  where `p` is the larger payout rate (the 10% partner commission). For the sample
+  numbers that's ≈ **12.5%**.
 
 - **At the default 20% markup** (sample numbers): buyer pays 79.20₽, margin
-  12.36₽, and **8.40₽ after** the 5% referral. Comfortably safe.
-
-- **Partner markup is free for you.** A partner setting +30% just makes their
-  buyers pay 30% more, which the partner keeps. Your margin is unchanged. The bot
-  enforces `partner markup ≤ 50% − MARKUP_PERCENT` (`PartnerService.max_partner_markup`)
-  so the total stays under WATA's +50% ceiling.
+  12.36₽ → **8.40₽** after a 5% referral, or **4.44₽** after a 10% partner
+  commission. Both safe.
 
 - **No multi-level compounding.** Each paid order credits **exactly one** earner:
-  if it came through a partner bot, the partner is paid their pre-computed markup;
+  if it came through a partner bot, the partner is paid their commission;
   otherwise the buyer's referrer earns 5%. There is no stacking, so "someone
   invites someone who invites someone" can never multiply a single order's payout.
 
 ## Recommendation
 
-- Keep **`MARKUP_PERCENT = 20`** (default). It clears the ~8% WATA commission and
-  the 5% referral with margin to spare, and still leaves partners **30%** of room.
-- Never drop below **~10%** — under that the 5% referral plus commission can wipe
-  out (or invert) the margin on referred sales.
-- Want partners to have more room? Lower your markup — but each point you give up
-  is a point off your own margin, and don't cross the ~10% floor.
+- Keep **`MARKUP_PERCENT = 20`** with **`PARTNER_COMMISSION_PERCENT = 10`**. That
+  clears the ~8% WATA commission and the 10% partner cut with margin to spare.
+- Never let `MARKUP_PERCENT` drop below roughly **`PARTNER_COMMISSION_PERCENT +
+  WATA_commission`** (~18% here) or partner-bot sales start losing money.
+- If you raise the partner commission, raise your markup by at least as much.
 
 Run the calculator with your own order's numbers before changing anything:
 
