@@ -766,6 +766,32 @@ async def on_admin_reject_reason(
 # ── History & admin ──────────────────────────────────────────
 
 
+@router.callback_query(F.data == "profile:show")
+async def cb_profile(
+    call: CallbackQuery, service: OrderService, referral: ReferralService, lang: str
+) -> None:
+    if not call.from_user:
+        await call.answer()
+        return
+    profile = await service.buyer_profile(call.from_user.id)
+    ov = await referral.overview(call.from_user.id)
+    registered = profile.registered.strftime("%Y-%m-%d") if profile.registered else "—"
+    text = t(
+        "profile",
+        lang,
+        id=call.from_user.id,
+        registered=registered,
+        stars=profile.stars,
+        orders=profile.orders,
+        spent=profile.spent,
+        referrals=ov.referrals,
+        earned=ov.earned,
+        available=ov.available,
+    )
+    await _render(call, text, keyboards.profile_menu(lang))
+    await call.answer()
+
+
 @router.callback_query(F.data == "orders:list")
 async def cb_orders(call: CallbackQuery, service: OrderService, lang: str) -> None:
     if not call.from_user:
@@ -788,7 +814,7 @@ async def cb_orders(call: CallbackQuery, service: OrderService, lang: str) -> No
                 )
             )
         text = "\n".join(lines)
-    await _render(call, text, keyboards.main_menu(lang))
+    await _render(call, text, keyboards.orders_menu(lang))
     await call.answer()
 
 

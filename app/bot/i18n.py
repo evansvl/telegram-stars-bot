@@ -34,7 +34,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": (
             "👋 <b>Привет!</b>\n\n"
             "Я помогу купить <b>Telegram Stars</b> ⭐ для любого пользователя Telegram.\n"
-            "Оплата картой или через СБП — быстро и безопасно через WATA.\n\n"
+            "Оплата картой или через СБП — быстро и безопасно.\n\n"
             "Нажми кнопку ниже, чтобы начать.\n\n"
             "Используя бота, вы принимаете оферту и политику конфиденциальности "
             "(раздел «❓ Помощь»)."
@@ -42,7 +42,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": (
             "👋 <b>Hi!</b>\n\n"
             "I'll help you buy <b>Telegram Stars</b> ⭐ for any Telegram user.\n"
-            "Pay by card or SBP — fast and secure via WATA.\n\n"
+            "Pay by card or SBP — fast and secure.\n\n"
             "Tap the button below to start.\n\n"
             "By using the bot you accept the Terms of Service and Privacy Policy "
             "(see “❓ Help”)."
@@ -188,6 +188,31 @@ TEXTS: dict[str, dict[str, str]] = {
     "order_status": {
         "ru": "Статус заказа: <b>{label}</b>",
         "en": "Order status: <b>{label}</b>",
+    },
+    # ── Profile & history ─────────────────────────────────────
+    "profile": {
+        "ru": (
+            "👤 <b>Профиль</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "📅 Регистрация: {registered}\n\n"
+            "⭐ Куплено звёзд: <b>{stars}</b>\n"
+            "🧾 Заказов: <b>{orders}</b>\n"
+            "💸 Потрачено: <b>{spent} ₽</b>\n\n"
+            "🤝 Приглашено: <b>{referrals}</b>\n"
+            "💰 Заработано: <b>{earned} ₽</b>\n"
+            "✅ Доступно к выводу: <b>{available} ₽</b>"
+        ),
+        "en": (
+            "👤 <b>Profile</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "📅 Registered: {registered}\n\n"
+            "⭐ Stars bought: <b>{stars}</b>\n"
+            "🧾 Orders: <b>{orders}</b>\n"
+            "💸 Spent: <b>{spent} ₽</b>\n\n"
+            "🤝 Invited: <b>{referrals}</b>\n"
+            "💰 Earned: <b>{earned} ₽</b>\n"
+            "✅ Available to withdraw: <b>{available} ₽</b>"
+        ),
     },
     # ── History & admin ───────────────────────────────────────
     "orders_header": {
@@ -488,8 +513,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "The number of stars must be between 50 and 50,000.",
     },
     "err_create_failed": {
-        "ru": "Не удалось создать заказ на стороне WATA. Попробуйте позже.",
-        "en": "WATA could not create the order. Please try again later.",
+        "ru": "Не удалось создать заказ. Попробуйте позже.",
+        "en": "Could not create the order. Please try again later.",
     },
     "err_order_not_found": {"ru": "Заказ не найден.", "en": "Order not found."},
     "err_payment_expired": {
@@ -501,8 +526,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "The payment link is unavailable or already paid.",
     },
     "err_auth": {
-        "ru": "Ошибка авторизации платёжного сервиса (проверьте WATA_TOKEN).",
-        "en": "Payment service authorization error (check WATA_TOKEN).",
+        "ru": "Ошибка авторизации платёжного сервиса. Попробуйте позже.",
+        "en": "Payment service authorization error. Please try again later.",
     },
     "err_rate_limit": {
         "ru": "Слишком много запросов к платёжному сервису. Подождите немного.",
@@ -519,6 +544,8 @@ TEXTS: dict[str, dict[str, str]] = {
     # ── Buttons ───────────────────────────────────────────────
     "btn_buy": {"ru": "⭐ Купить звёзды", "en": "⭐ Buy Stars"},
     "btn_orders": {"ru": "🧾 Мои заказы", "en": "🧾 My orders"},
+    "btn_profile": {"ru": "👤 Профиль", "en": "👤 My profile"},
+    "btn_order_history": {"ru": "🧾 История заказов", "en": "🧾 Order history"},
     "btn_help": {"ru": "❓ Помощь", "en": "❓ Help"},
     "btn_language": {"ru": "🌐 Язык / Language", "en": "🌐 Language / Язык"},
     "btn_referral": {"ru": "🤝 Партнёрка", "en": "🤝 Referrals"},

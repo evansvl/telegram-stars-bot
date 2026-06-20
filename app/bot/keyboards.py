@@ -8,6 +8,7 @@ from aiogram.types import (
     KeyboardButton,
     KeyboardButtonRequestManagedBot,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -20,11 +21,29 @@ COUNT_PRESETS = (50, 100, 250, 500, 1000)
 def main_menu(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_buy", lang), callback_data="buy:start")
-    builder.button(text=t("btn_orders", lang), callback_data="orders:list")
+    builder.button(text=t("btn_profile", lang), callback_data="profile:show")
     builder.button(text=t("btn_referral", lang), callback_data="ref:show")
     builder.button(text=t("btn_partner", lang), callback_data="partner:show")
     builder.button(text=t("btn_help", lang), callback_data="help:show")
     builder.button(text=t("btn_language", lang), callback_data="lang:choose")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def profile_menu(lang: str) -> InlineKeyboardMarkup:
+    """Profile hub: order history, referral program, back to the main menu."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_order_history", lang), callback_data="orders:list")
+    builder.button(text=t("btn_referral", lang), callback_data="ref:show")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def orders_menu(lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_profile", lang), callback_data="profile:show")
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -72,11 +91,17 @@ def confirm_payment(lang: str) -> InlineKeyboardMarkup:
 
 
 def payment_link(url: str, order_id: str, lang: str) -> InlineKeyboardMarkup:
-    # No "check payment" button: the WATA webhook updates the order and notifies the
-    # buyer automatically once paid.
+    # Open the payment page as a Telegram Mini App (in-app webview, no external
+    # browser). Falls back to a plain URL button if the link isn't HTTPS, since
+    # web_app requires HTTPS. No "check payment" button: the WATA webhook updates
+    # the order and notifies the buyer automatically once paid.
+    if url.startswith("https://"):
+        pay_button = InlineKeyboardButton(text=t("btn_goto_pay", lang), web_app=WebAppInfo(url=url))
+    else:
+        pay_button = InlineKeyboardButton(text=t("btn_goto_pay", lang), url=url)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=t("btn_goto_pay", lang), url=url)],
+            [pay_button],
             [InlineKeyboardButton(text=t("btn_menu", lang), callback_data="menu:show")],
         ]
     )

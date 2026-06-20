@@ -76,6 +76,9 @@ class UserRepository:
         )
         return int(count or 0)
 
+    async def get_created_at(self, tg_id: int) -> datetime | None:
+        return await self._session.scalar(select(User.created_at).where(User.tg_id == tg_id))
+
 
 class ReferralRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -318,6 +321,19 @@ class OrderRepository:
             order.raw_webhook = raw_webhook
         await self._session.flush()
         return order
+
+    async def buyer_stats(self, buyer_tg_id: int) -> dict[str, Any]:
+        """A single buyer's paid totals: order count, stars bought, money spent."""
+        paid = [OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value]
+        flt = (Order.buyer_tg_id == buyer_tg_id) & Order.status.in_(paid)
+        orders = await self._session.scalar(select(func.count()).select_from(Order).where(flt))
+        stars = await self._session.scalar(
+            select(func.coalesce(func.sum(Order.count), 0)).where(flt)
+        )
+        spent = await self._session.scalar(
+            select(func.coalesce(func.sum(Order.amount), 0)).where(flt)
+        )
+        return {"orders": int(orders or 0), "stars": int(stars or 0), "spent": Decimal(spent or 0)}
 
     async def stats(self) -> dict[str, Any]:
         """Aggregate turnover / order count / total margin for paid+ orders."""

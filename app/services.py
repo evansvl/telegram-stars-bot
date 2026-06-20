@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
@@ -81,6 +82,14 @@ def webhook_status(payload: dict[str, Any] | None) -> str | None:
 class Quote:
     star_price: StarPrice
     quote: PriceQuote
+
+
+@dataclass(slots=True)
+class BuyerProfile:
+    registered: datetime | None
+    orders: int
+    stars: int
+    spent: Decimal
 
 
 @dataclass(slots=True)
@@ -306,6 +315,17 @@ class OrderService:
     async def list_orders(self, buyer_tg_id: int, limit: int = 20) -> list[Order]:
         async with self._db.session() as session:
             return await OrderRepository(session).list_for_buyer(buyer_tg_id, limit=limit)
+
+    async def buyer_profile(self, tg_id: int) -> BuyerProfile:
+        async with self._db.session() as session:
+            registered = await UserRepository(session).get_created_at(tg_id)
+            stats = await OrderRepository(session).buyer_stats(tg_id)
+        return BuyerProfile(
+            registered=registered,
+            orders=stats["orders"],
+            stars=stats["stars"],
+            spent=stats["spent"],
+        )
 
     async def stats(self) -> dict[str, Any]:
         async with self._db.session() as session:
