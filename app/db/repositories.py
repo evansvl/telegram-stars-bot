@@ -406,11 +406,17 @@ class OrderRepository:
         return order
 
     async def outstanding_ton_amounts(self) -> set[Decimal]:
-        """TON amounts of still-payable crypto orders (for jitter uniqueness)."""
+        """TON amounts of still-payable/in-flight crypto orders (for jitter uniqueness).
+
+        Covers both PENDING (awaiting payment) and PAID (mid-delivery) so a new order
+        never reuses an amount another order is still using.
+        """
         result = await self._session.execute(
             select(Order.ton_amount).where(
                 Order.provider == "ggp",
-                Order.status == OrderStatusEnum.PENDING.value,
+                Order.status.in_(
+                    [OrderStatusEnum.PENDING.value, OrderStatusEnum.PAID.value]
+                ),
                 Order.ton_amount.is_not(None),
             )
         )

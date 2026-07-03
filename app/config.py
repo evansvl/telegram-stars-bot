@@ -56,8 +56,10 @@ class Settings(BaseSettings):
     # pending crypto orders (oldest first).
     ton_poll_interval: int = 20
     crypto_payment_ttl_min: int = 30  # recommended pay-within window shown to buyer
-    # Each pending crypto order gets a unique TON amount, spaced by this step.
-    ton_amount_jitter_step: Decimal = Decimal("0.01")
+    # Each pending crypto order gets a unique TON amount, spaced by this step. Fine
+    # granularity (0.001 TON) keeps amounts close to the real price and gives plenty
+    # of distinct slots, so amounts look like 0.982, 0.983, … rather than round 0.01s.
+    ton_amount_jitter_step: Decimal = Decimal("0.001")
 
     # Test mode: skip WATA entirely. Orders get a "mark as paid" button instead of
     # a real payment link, so the referral/partner flows can be tested end-to-end.
