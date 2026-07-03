@@ -878,3 +878,13 @@ class PartnerService:
             if bot is None:
                 return None
             return await repo.set_active(bot_id, not bot.active)
+
+    async def delete_bot(self, bot_id: int) -> bool:
+        """Remove a partner bot (e.g. its token was revoked). Returns True if deleted.
+
+        Order history keeps its own ``partner_owner_tg_id``/``partner_earning``, so
+        already-earned payouts are unaffected; the owner may create a new bot again.
+        """
+        self._markup_cache.pop(bot_id, None)
+        async with self._db.session() as session:
+            return await PartnerBotRepository(session).delete(bot_id)

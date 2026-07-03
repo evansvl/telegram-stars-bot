@@ -304,6 +304,15 @@ class PartnerBotRepository:
         await self._session.flush()
         return bot
 
+    async def delete(self, bot_id: int) -> bool:
+        """Remove a partner bot row. Returns True if one was deleted."""
+        bot = await self.get_by_bot_id(bot_id)
+        if bot is None:
+            return False
+        await self._session.delete(bot)
+        await self._session.flush()
+        return True
+
 
 class OrderRepository:
     def __init__(self, session: AsyncSession) -> None:

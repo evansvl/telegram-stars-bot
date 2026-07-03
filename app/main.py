@@ -17,6 +17,7 @@ import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
@@ -138,16 +139,22 @@ async def main() -> None:
 
     # Re-arm webhooks for previously created partner bots.
     for pb in await partner.list_active():
+        child = Bot(pb.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         try:
-            child = Bot(pb.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
             await child.set_webhook(
                 url=f"{settings.public_base_url}/partner/{pb.token}",
                 allowed_updates=["message", "callback_query"],
             )
-            await child.session.close()
             logger.info("partner bot webhook set bot_id=%s", pb.bot_id)
+        except TelegramUnauthorizedError:
+            # Token revoked (owner deleted the bot in @BotFather): drop it from the
+            # DB so we stop re-arming it on every restart.
+            logger.warning("partner bot %s unauthorized — deleted, removing from DB", pb.bot_id)
+            await partner.delete_bot(pb.bot_id)
         except Exception:
             logger.exception("failed to set webhook for partner bot %s", pb.bot_id)
+        finally:
+            await child.session.close()
 
     # Crypto rail: watch the TON deposit address and deliver via GGP buyStars.
     poller_task: asyncio.Task[None] | None = None
