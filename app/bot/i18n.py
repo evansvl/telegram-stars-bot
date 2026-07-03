@@ -199,7 +199,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "⚠️ Сумма должна совпадать <b>точно</b> — так мы находим ваш платёж. "
             "Не меняйте комментарий.\n"
             "Звёзды придут автоматически после подтверждения в сети (обычно пара минут). "
-            "Реквизиты действуют ~{ttl} мин.\n\n"
+            "Рекомендуем оплатить в течение ~{ttl} мин.\n\n"
             "Оплатили, но звёзды не пришли? Напишите @nnstorecontactbot."
         ),
         "en": (
@@ -212,7 +212,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "⚠️ The amount must match <b>exactly</b> — that's how we find your payment. "
             "Don't change the comment.\n"
             "Stars arrive automatically after network confirmation (usually a couple of "
-            "minutes). The details are valid for ~{ttl} min.\n\n"
+            "minutes). We recommend paying within ~{ttl} min.\n\n"
             "Paid but no stars? Message @nnstorecontactbot."
         ),
     },

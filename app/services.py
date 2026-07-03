@@ -254,7 +254,13 @@ class OrderService:
 
     @property
     def crypto_enabled(self) -> bool:
-        return self._settings.crypto_enabled and self._ggp is not None
+        # Require a deposit address too: without it buyers can't pay and the TON
+        # poller (app/main.py) won't start, so the rail must stay hidden.
+        return (
+            self._settings.crypto_enabled
+            and self._ggp is not None
+            and bool(self._settings.ggp_ton_address)
+        )
 
     # ── Language preferences ─────────────────────────────────────
 
