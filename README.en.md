@@ -39,7 +39,7 @@ bilingual — **Russian and English** — with on-the-fly switching.
 | 💰 | **Configurable margin** | Markup over the minimum price via `MARKUP_PERCENT`, clamped to +50% |
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
 | 💎 | **Crypto (TON) payment** | A second rail: pay in TON via GreenGamePay with its **own** markup (`CRYPTO_MARKUP_PERCENT`). Delivery is gated on the GGP balance: once funds land, stars ship via `buyStars` |
-| 🪙 | **Crypto-only mode** | `CRYPTO_ONLY=true` — run without WATA at all (no card rail). For those who don't have a WATA merchant |
+| 🪙 | **Independent payment methods** | Card and crypto enable separately and work together or alone. No WATA? Leave `WATA_TOKEN` empty and run crypto-only |
 | 💱 | **Two ⭐ rates** | The menu shows both rates: card (WATA) and crypto/GGP (cheaper) |
 | 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API; GGP balance check (`check_balance`) for crypto |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
@@ -272,29 +272,19 @@ How it works: the buyer pays TON to your GGP deposit address → your GGP balanc
 the funds always reach you, delivery is gated **on the balance**, not on scanning the
 chain: the oldest unpaid crypto order ships first (FIFO).
 
-To add crypto as a second payment method, set these in `.env` and restart
-(`docker compose up -d`):
+Crypto is an independent payment method: it turns on by itself as soon as the three
+fields `GGP_USERNAME`, `GGP_PASSWORD` and `GGP_TON_ADDRESS` are set. Put them in `.env`
+and restart (`docker compose up -d`):
 
 ```dotenv
-CRYPTO_ENABLED=true
 GGP_USERNAME=your-ggp-login
 GGP_PASSWORD=your-ggp-password
 GGP_TON_ADDRESS=ton-deposit-address        # from your GGP dashboard
-GGP_DEPOSIT_MEMO=your-ggp-login            # payment comment
 ```
 
-**Crypto-only mode (no WATA).** If you don't have a WATA merchant and want to accept
-TON only — add `CRYPTO_ONLY=true`. The card rail is hidden everywhere and `WATA_TOKEN`
-can be left empty:
-
-```dotenv
-CRYPTO_ENABLED=true
-CRYPTO_ONLY=true
-WATA_TOKEN=
-GGP_USERNAME=your-ggp-login
-GGP_PASSWORD=your-ggp-password
-GGP_TON_ADDRESS=ton-deposit-address
-```
+**Crypto only (no WATA).** Both rails are independent — just leave `WATA_TOKEN` empty
+and the card rail is hidden everywhere. At least one rail (card and/or crypto) must be
+configured.
 
 See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the crypto economics.
 
@@ -320,17 +310,15 @@ land in the repository.
 | Variable | Required | Description |
 |---|---|---|
 | `BOT_TOKEN` | yes | Bot token from [@BotFather](https://t.me/BotFather) |
-| `WATA_TOKEN` | yes* | Merchant token from the WATA dashboard (*may be empty when `CRYPTO_ONLY=true`) |
+| `WATA_TOKEN` | for card | Merchant token from the WATA dashboard. Set → card payment on; empty → card off |
 | `WATA_BASE_URL` | — | Digital Goods API base (default `https://dg-api.wata.pro/api`) |
 | `WATA_PUBLIC_KEY_URL` | — | URL of the WATA public key for webhook signature verification |
 | `MARKUP_PERCENT` | — | Markup over `minPrice` in % (card/WATA), result clamped to +50% (default `20`) |
 | `AUTO_CONFIRM` | — | `true` — auto-confirm star delivery after payment |
-| `CRYPTO_ENABLED` | — | `true` — enable the second rail: crypto (TON) via GreenGamePay |
-| `CRYPTO_ONLY` | — | `true` — crypto-only mode: the card (WATA) rail is hidden and `WATA_TOKEN` isn't needed (requires `CRYPTO_ENABLED=true`) |
 | `CRYPTO_MARKUP_PERCENT` | — | Markup for crypto payment in % (its own, usually lower; no +50% clamp) |
-| `GGP_USERNAME` / `GGP_PASSWORD` | for crypto | GreenGamePay credentials (via `.env` only) |
+| `GGP_USERNAME` / `GGP_PASSWORD` | for crypto | GreenGamePay credentials (via `.env` only). Set together with the address → crypto on |
 | `GGP_BASE_URL` | — | GGP API base (default `пополнистим.рф` in IDNA form) |
-| `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (from the GreenGamePay dashboard) |
+| `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (from the GreenGamePay dashboard). Required to enable crypto |
 | `GGP_DEPOSIT_MEMO` | — | Payment comment = your GGP login (default `evansvl`) |
 | `TON_POLL_INTERVAL` | — | GGP balance check interval in seconds (default `20`) |
 | `CRYPTO_PAYMENT_TTL_MIN` | — | Validity of a quoted TON amount in minutes (default `30`) |
@@ -550,6 +538,17 @@ WATA delivers the stars, and your profit is the built-in margin.
 The “🌐 Language / Язык” menu button. The choice is saved
 per-user; on first contact the language is detected from the Telegram `language_code`
 (Russian by default).
+
+---
+
+## 💎 Support development
+
+If this project was useful, you can support the developer. Thank you! ❤️
+
+- **SBP / RU card:** https://yookassa.ru/my/i/aJRiTyq5D3VB/l
+- **CryptoBot:** https://t.me/send?start=IVftnggXmRv8
+- **TON:** `UQAtdMEig3Wl_D3FNx4RU3RhxnoJI3IizGxrrNj3O8Q-fDpK`
+- **USDT (TRC20):** `TBW9TFUh93U1G5eTT1VTsZw51L669khCiz`
 
 ---
 

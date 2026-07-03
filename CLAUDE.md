@@ -2,7 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A bilingual (RU primary / EN secondary) Telegram bot that sells Telegram Stars via the **WATA Digital Goods API**, with a referral program, partner-owned hosted bots, and admin-moderated withdrawals. Python 3.12, aiogram 3.x, aiohttp, SQLAlchemy 2 async, PostgreSQL, Redis, Alembic.
+A bilingual (RU primary / EN secondary) Telegram bot that sells Telegram Stars over **two payment rails** — the **WATA Digital Goods API** (card/SBP) and **GreenGamePay / GGP** (crypto, TON) — with a referral program, partner-owned hosted bots, and admin-moderated withdrawals. Python 3.12, aiogram 3.x, aiohttp, SQLAlchemy 2 async, PostgreSQL, Redis, Alembic.
+
+The two rails are independent and each is optional, auto-enabled from its own credentials: the card rail is on when `WATA_TOKEN` is set (`settings.wata_enabled`), the crypto rail when the GGP credentials + `GGP_TON_ADDRESS` are all set (`settings.crypto_enabled`). A `model_validator` requires at least one. There is no separate on/off or "crypto-only" flag.
 
 ## Commands
 
@@ -25,7 +27,8 @@ docker compose logs -f bot
 
 Alembic migrations auto-apply on container start (`entrypoint.sh`). To add one, create
 `alembic/versions/000N_<slug>.py` with `down_revision` pointing at the previous head
-(chain is `0001_initial` → `0002` → `0003` → `0004`).
+(the chain is linear, `0001_initial` → … → the current head in `alembic/versions/`; `0007_crypto_orders`
+added the `provider`/`ton_amount`/`ggp_tx_id` columns for the crypto rail).
 
 ### Dependency / Python-version caveat
 
@@ -54,11 +57,11 @@ and for every active partner bot; on shutdown it deletes its webhook. The Telegr
 
 ### Layering
 
-`handlers (aiogram) → services → repositories → db.session` plus a `wata` client package and pure
+`handlers (aiogram) → services → repositories → db.session` plus `wata`/`ggp` client packages and pure
 `pricing`/`i18n` leaf modules.
 
 - **`app/services.py`** is the core. Three service classes, each holding `Settings` + `Database`:
-  - `OrderService` — pricing/quote, `create_order`, `sync_order`, stats, language cache, `simulate_payment` (test mode).
+  - `OrderService` — pricing/quote, `create_order` (WATA) and `create_crypto_order` (GGP), `sync_order`, crypto delivery (`oldest_pending_crypto`, `try_deliver_crypto`, `deliver_ggp_order`), stats, language cache, `simulate_payment` (test mode). Holds an optional `GgpClient` (None when crypto disabled); `wata_enabled`/`crypto_enabled` gate the rails.
   - `ReferralService` — referral attribution, `credit_for_order` (idempotent per order), balance, withdrawals.
   - `PartnerService` — partner bot CRUD, per-bot markup, markup cache.
 - **`app/db/repositories.py`** — thin per-aggregate repositories; each takes an `AsyncSession`. Upserts use Postgres `ON CONFLICT` (`pg_insert`).
@@ -67,10 +70,12 @@ and for every active partner bot; on shutdown it deletes its webhook. The Telegr
 ### Dependency injection into handlers
 
 `main.py` puts shared singletons on the Dispatcher (`dp["settings"]`, `dp["service"]`, `dp["referral"]`,
-`dp["partner"]`); aiogram injects them into handlers by matching the parameter name. `LanguageMiddleware`
-(`app/bot/middleware.py`) injects `lang: str` into every message/callback handler by resolving the user's
-stored/Telegram language. The same `dp` serves the main bot **and** all partner bots, so handlers must be
-bot-agnostic — use `event.bot.id` to tell which bot is running (e.g. to look up a partner markup).
+`dp["partner"]`, and `dp["main_bot"]`); aiogram injects them into handlers by matching the parameter name.
+`LanguageMiddleware` (`app/bot/middleware.py`) injects `lang: str` into every message/callback handler by
+resolving the user's stored/Telegram language. The same `dp` serves the main bot **and** all partner bots,
+so handlers must be bot-agnostic — use `event.bot.id` to tell which bot is running (e.g. to look up a
+partner markup). `dp["main_bot"]` is that shared main bot: a handler firing on a *partner* bot uses it to
+send notifications through the main bot (e.g. `cb_crypto_paid` → `notify_order_outcome`).
 
 ### Money & pricing invariant (`app/pricing.py`)
 
@@ -89,14 +94,36 @@ the source of truth** — `OrderService.sync_order` re-fetches authoritative sta
 (and auto-confirms `Review → Paid` when `AUTO_CONFIRM`). Errors raise `WataApiError`/`WataNetworkError`,
 whose `message_key()` returns an i18n key (not user text).
 
+### GGP / crypto rail (`app/ggp/`, `app/ton/poller.py`)
+
+`GgpClient` wraps GreenGamePay: `/api/token` (short-lived, auto-refreshed), `/api/get_stars_price`
+(returns `{ton, rub}`), `/api/buyStars(username, quantity)`, `/api/check_balance`. Errors raise
+`GgpApiError`/`GgpNetworkError` with a `message_key()` (same i18n contract as WATA).
+
+**Delivery is gated on the operator's GGP balance, not on scanning the chain.** The buyer pays TON to the
+operator's GGP deposit address (`GGP_TON_ADDRESS`); the operator's balance rises; delivery then runs
+`buyStars`. There is **no per-buyer on-chain matching** — the accepted trade-off (operator always receives
+the TON) is that we deliver FIFO: `oldest_pending_crypto()` picks the oldest `PENDING` `provider="ggp"`
+order and `try_deliver_crypto` delivers it iff `check_balance() > 0`. Two triggers share this path: the
+buyer's "✅ I paid" button (`cb_crypto_paid`) and the background `CryptoDeliveryWorker` (`app/ton/poller.py`,
+an asyncio task started/stopped in `main.py`, polling every `TON_POLL_INTERVAL`s). On a `buyStars` failure,
+`deliver_ggp_order` reverts to `PENDING` (retryable) if the message looks like insufficient balance
+(`_looks_insufficient` heuristic in `services.py`), else marks `ERROR` (permanent) so the failed order
+stops blocking the FIFO head. (There is **no** `app/ton/scanner.py` / toncenter polling anymore — it was
+removed in favour of this balance model.)
+
 ### Order & money flows
 
-Order status (`OrderStatusEnum`, a `StrEnum`): `New → Pending → Review → Paid/Refunded → Success/Fail`
-(plus `Error`). Earnings are credited when an order reaches `Paid`/`Success`, via `credit_for_order`
+Order status (`OrderStatusEnum`, a `StrEnum`): WATA orders go `New → Pending → Review → Paid/Refunded →
+Success/Fail` (plus `Error`); crypto orders go `Pending → Paid → Success` (or `Error`). `Order.provider`
+is `"wata"` or `"ggp"`. Earnings are credited once an order reaches `Paid`/`Success`, via `credit_for_order`
 (idempotent — one `referral_earnings` row per `order_id`): a partner-bot order pays the partner its
 pre-computed `partner_earning`; otherwise the buyer's referrer earns `REFERRAL_PERCENT` (5%) of the gross.
-Both feed one wallet; `WithdrawalService` flow: request (locks balance) → admin approves with proof
-(TRON/TON link or PDF `file_id`) or rejects with a reason.
+`notify_order_outcome` (`app/bot/notify.py`) is the shared terminal-outcome path for both rails: it
+messages the buyer through the bot the order was placed on, credits + notifies the earner (partner vs
+referrer get distinct wording), and notifies admins once on `SUCCESS`. Both earnings feed one wallet;
+`WithdrawalService` flow: request (locks balance) → admin approves with proof (TRON/TON link or PDF
+`file_id`) or rejects with a reason.
 
 ### Test mode
 

@@ -86,7 +86,7 @@ async def _home_view(
     bot_id = event.bot.id if event.bot else 0
     text = t("welcome", lang)
     # No card rate in crypto-only mode (no WATA).
-    card_rate = None if service.crypto_only else await service.star_rate(service.markup_percent)
+    card_rate = await service.star_rate(service.markup_percent) if service.wata_enabled else None
     crypto_rate = await service.crypto_star_rate()
     if card_rate is not None and crypto_rate is not None:
         text += "\n\n" + t("star_rate_both", lang, card=card_rate, crypto=crypto_rate)
@@ -197,15 +197,15 @@ async def _set_target_username(
 ) -> None:
     """Validate a recipient @username and advance to the count step.
 
-    Card mode validates the username via WATA (and caches its ``minPrice``); in
-    crypto-only mode there's no WATA, so we accept a well-formed @username and let
-    GGP validate it at delivery time.
+    Card mode validates the username via WATA (and caches its ``minPrice``); with
+    no card rail there's no WATA, so we accept a well-formed @username and let GGP
+    validate it at delivery time.
     """
     username = username.strip().lstrip("@")
     if not _USERNAME_RE.match(username):
         await _render(event, t("username_invalid", lang), keyboards.ask_username_kb(lang))
         return
-    if service.crypto_only:
+    if not service.wata_enabled:
         await state.update_data(target_username=username, min_price=None)
         await state.set_state(BuyStates.waiting_count)
         await _render(
@@ -277,7 +277,7 @@ async def _show_quote(
     # ── Card (WATA) ──
     card_amount: Decimal | None = None
     min_price_raw = data.get("min_price")
-    if not service.crypto_only and min_price_raw is not None:
+    if service.wata_enabled and min_price_raw is not None:
         min_price = Decimal(str(min_price_raw))
         operator = 0.0 if no_markup else service.markup_percent
         if partner_owner is not None:
@@ -314,8 +314,8 @@ async def _show_quote(
             )
 
     if card_amount is None and crypto_ton is None:
-        # Nothing to offer (e.g. crypto-only and the GGP quote failed).
-        key = "crypto_unavailable" if service.crypto_only else "session_expired"
+        # Nothing to offer (e.g. no card rail and the GGP quote failed).
+        key = "crypto_unavailable" if not service.wata_enabled else "session_expired"
         await _render(event, t(key, lang), keyboards.main_menu(lang))
         await state.clear()
         return

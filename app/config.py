@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     # Telegram
     bot_token: str = Field(..., min_length=1)
 
-    # WATA Digital Goods API (card/SBP rail). Optional when CRYPTO_ONLY is on.
+    # ── Card rail: WATA Digital Goods API ────────────────────────
+    # Enabled automatically when WATA_TOKEN is set (see the wata_enabled property).
     wata_token: str = ""
     wata_base_url: str = "https://dg-api.wata.pro/api"
     wata_public_key_url: str = "https://api.wata.pro/api/h2h/public-key"
@@ -34,16 +35,14 @@ class Settings(BaseSettings):
     markup_percent: float = 20.0  # card (WATA) markup
     auto_confirm: bool = True
 
-    # ── Crypto rail (TON via GreenGamePay) ───────────────────────
-    # A payment method where the buyer pays in TON to our GGP deposit address,
-    # which tops up our GGP balance; we then deliver via GGP /api/buyStars.
+    # ── Crypto rail: TON via GreenGamePay ────────────────────────
+    # Enabled automatically when the GGP credentials + deposit address are all set
+    # (see the crypto_enabled property). The buyer pays in TON to our GGP deposit
+    # address, which tops up our GGP balance; we then deliver via GGP /api/buyStars.
     # Delivery is gated on the GGP balance (check_balance), not on scanning the
     # chain — the operator always receives the funds, so as soon as the balance
     # covers the purchase, buyStars runs. Crypto gets a cheaper star rate, so it
     # has its OWN, lower markup (added on top of the GGP wholesale TON price).
-    crypto_enabled: bool = False
-    # Crypto-only mode: no WATA (card) rail at all — for operators without WATA.
-    crypto_only: bool = False
     crypto_markup_percent: float = 10.0
     # GreenGamePay credentials/host (secrets via env only, never committed).
     ggp_username: str = ""
@@ -121,13 +120,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_rails(self) -> Settings:
-        """At least one working payment rail must be configured."""
-        if self.crypto_only:
-            if not self.crypto_enabled:
-                raise ValueError("CRYPTO_ONLY requires CRYPTO_ENABLED=true")
-        elif not self.wata_token:
-            raise ValueError("WATA_TOKEN is required (or enable CRYPTO_ONLY)")
+        """At least one payment rail must be configured (card and/or crypto)."""
+        if not (self.wata_enabled or self.crypto_enabled):
+            raise ValueError(
+                "no payment rail configured: set WATA_TOKEN (card) and/or the GGP "
+                "credentials + GGP_TON_ADDRESS (crypto)"
+            )
         return self
+
+    @property
+    def wata_enabled(self) -> bool:
+        """Card rail is on when a WATA merchant token is configured."""
+        return bool(self.wata_token)
+
+    @property
+    def crypto_enabled(self) -> bool:
+        """Crypto rail is on when GGP credentials and a deposit address are set."""
+        return bool(self.ggp_username and self.ggp_password and self.ggp_ton_address)
 
     @property
     def admin_ids(self) -> list[int]:

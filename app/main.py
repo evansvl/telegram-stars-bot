@@ -73,9 +73,10 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     wata = WataClient(settings.wata_base_url, settings.wata_token, session)
-    # Crypto (TON via GreenGamePay) is an optional second rail.
+    # Crypto (TON via GreenGamePay) is an independent optional rail, on when the
+    # GGP credentials + deposit address are configured.
     ggp: GgpClient | None = None
-    if settings.crypto_enabled and settings.ggp_username and settings.ggp_password:
+    if settings.crypto_enabled:
         ggp = GgpClient(
             settings.ggp_base_url, settings.ggp_username, settings.ggp_password, session
         )
@@ -159,7 +160,7 @@ async def main() -> None:
 
     # Crypto rail: deliver pending crypto orders once the GGP balance covers them.
     worker_task: asyncio.Task[None] | None = None
-    if ggp and settings.ggp_ton_address:
+    if ggp:
         worker = CryptoDeliveryWorker(
             settings=settings,
             service=service,
@@ -169,8 +170,6 @@ async def main() -> None:
         )
         worker_task = asyncio.create_task(worker.run())
         logger.info("crypto rail enabled: delivering on GGP balance (buyStars)")
-    elif settings.crypto_enabled:
-        logger.warning("CRYPTO_ENABLED but GGP creds/TON address missing — crypto rail off")
 
     stop_event = asyncio.Event()
     try:

@@ -278,19 +278,14 @@ class OrderService:
         return self._settings.crypto_markup_percent
 
     @property
-    def crypto_enabled(self) -> bool:
-        # Require a deposit address too: without it buyers can't pay and the
-        # balance worker (app/main.py) won't start, so the rail must stay hidden.
-        return (
-            self._settings.crypto_enabled
-            and self._ggp is not None
-            and bool(self._settings.ggp_ton_address)
-        )
+    def wata_enabled(self) -> bool:
+        """Card (WATA) rail is offered."""
+        return self._settings.wata_enabled
 
     @property
-    def crypto_only(self) -> bool:
-        """No card (WATA) rail — only crypto is offered."""
-        return self._settings.crypto_only and self.crypto_enabled
+    def crypto_enabled(self) -> bool:
+        """Crypto (TON/GGP) rail is offered. The GGP client is built iff configured."""
+        return self._ggp is not None
 
     @property
     def admin_ids(self) -> list[int]:
