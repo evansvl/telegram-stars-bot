@@ -21,7 +21,7 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 > solely responsible for the legality of reselling Stars and for taxes. The
 > project is not affiliated with the WATA provider.
 
-### [✨ Features](#-features) · [🤖 No server](#-no-server-required) · [🧱 Stack](#-stack) · [🚀 Quick start](#-quick-start) · [🖥️ Server](#️-getting-a-server) · [⚙️ Configuration](#️-configuration) · [🌐 Reverse proxy & HTTPS](#-reverse-proxy--https) · [🪝 Webhooks](#-webhooks-telegram--wata) · [📦 Statuses](#-order-statuses) · [🔁 Updating](#-updating) · [❓ FAQ](#-faq) · [⚠️ Disclaimer](#️-disclaimer) · [📄 License](#-license)
+### [✨ Features](#-features) · [🤖 No server](#-no-server-required) · [🧱 Stack](#-stack) · [🚀 Step-by-step install](#-step-by-step-install-for-beginners) · [⚙️ Configuration](#️-configuration) · [🌐 Reverse proxy & HTTPS](#-reverse-proxy--https) · [🪝 Webhooks](#-webhooks-telegram--wata) · [📦 Statuses](#-order-statuses) · [🔁 Updating](#-updating) · [❓ FAQ](#-faq) · [⚠️ Disclaimer](#️-disclaimer) · [📄 License](#-license)
 
 </div>
 
@@ -71,50 +71,216 @@ This repository is only for those who want to run everything on their own server
 
 ---
 
-## 🚀 Quick start
+## 🚀 Step-by-step install (for beginners)
 
-### Option A — manual
+> Never worked with a server before? No problem — just follow the steps in order.
+> The whole thing takes **~30–40 minutes**. Everything you need to type is in `code`
+> blocks you can copy as-is.
+>
+> **Already experienced?** In short: rent a VPS, point a domain at its IP, run
+> `curl -fsSL https://raw.githubusercontent.com/evansvl/telegram-stars-bot/main/scripts/install.sh | bash`,
+> fill in `.env` (`BOT_TOKEN`, `WATA_TOKEN`, `WEBHOOK_HOST`, `ADMIN_IDS`), put Caddy
+> in front of `127.0.0.1:8080`, restart. Details below.
 
-```bash
-git clone https://github.com/evansvl/telegram-stars-bot.git
-cd telegram-stars-bot
-cp .env.example .env          # then edit .env (see below)
-docker compose up -d --build  # migrations are applied automatically on start
-docker compose logs -f bot    # watch the logs
-```
+### What you'll need
 
-### Option B — server script
+- A **Telegram** account.
+- A Linux **VPS** — from ~$3/mo (step 3).
+- A **domain** — from ~$2/yr, or a free subdomain (step 4).
+- **WATA** access to accept card payments (step 2).
+
+---
+
+### Step 1. Create a bot in Telegram → `BOT_TOKEN`
+
+1. Open [@BotFather](https://t.me/BotFather) in Telegram.
+2. Send `/newbot`, pick a name and a `username` (must end in `bot`).
+3. BotFather sends a **token** like `123456789:AAE-Ct...` — copy it.
+
+> 🔒 The token is your bot's password. Never share or publish it.
+
+---
+
+### Step 2. Get WATA access → `WATA_TOKEN`
+
+WATA lets the bot accept card/SBP payments and deliver stars (no deposit needed).
+
+1. Sign up at [merchant.wata.pro](https://merchant.wata.pro/login) and enable the
+   **“Telegram Stars + Acquiring”** product.
+2. Find the **API token** in the dashboard — that's `WATA_TOKEN`.
+
+> There's a sandbox at [merchant-sandbox.wata.pro](https://merchant-sandbox.wata.pro/)
+> (access granted by a WATA manager).
+
+---
+
+### Step 3. Rent a server (VPS)
+
+The bot needs a **Linux VPS** with a public IP. Any provider works; we use
+**[Aeza](https://aeza.net/?ref=613643)** — signing up via
+[this link](https://aeza.net/?ref=613643) also supports the project 💚
+
+- OS: **Ubuntu 22.04+** (or Debian 12+).
+- Plan: **1 vCPU, 1 GB RAM, 10 GB** disk — plenty.
+- Ports **80 and 443** must be open.
+
+After creating it, note the server's **IP address** and **root password**.
+
+---
+
+### Step 4. Point a domain at the server
+
+Telegram delivers updates over **HTTPS** only, which needs a domain.
+
+1. Buy a domain (e.g. [namecheap.com](https://www.namecheap.com)) or grab a free
+   subdomain (e.g. [duckdns.org](https://www.duckdns.org)).
+2. In DNS settings create an **A-record**: name `bot`, value = your **server IP**
+   from step 3, e.g. `bot.example.com → 12.34.56.78`.
+3. Wait 5–30 minutes for the record to propagate.
+
+Remember `bot.example.com` — that's your **`WEBHOOK_HOST`**.
+
+---
+
+### Step 5. Connect to the server over SSH
+
+- **Windows:** open **PowerShell** (or “Terminal”) and run:
+  ```powershell
+  ssh root@YOUR-SERVER-IP
+  ```
+- **macOS / Linux:** open “Terminal” and run the same.
+
+On first connect it asks `yes/no` — type `yes`. Then enter the root password
+(characters **won't show** as you type — that's normal, just type and press Enter).
+
+---
+
+### Step 6. Install the bot with one command
+
+On the server, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/evansvl/telegram-stars-bot/main/scripts/install.sh -o install.sh
 bash install.sh
 ```
 
-`scripts/install.sh` is idempotent: it installs Docker (if missing), clones the
-repository, creates `.env` from the template with hints, then builds and starts the
-stack. On the first run it will ask you to fill in `.env` — edit it and run the
-script again.
-
-> ⚠️ The bot runs in **webhook mode only** — both Telegram and WATA send requests to
-> your server. So a **public HTTPS domain is mandatory**: set `WEBHOOK_HOST` in `.env`
-> and put a TLS reverse proxy in front (see below). Without externally reachable HTTPS
-> the bot won't receive Telegram updates and won't start.
+The script installs Docker, downloads the project and creates the `.env` settings
+file. At the end it says *“edit .env and run the script again”* — let's do that.
 
 ---
 
-## 🖥️ Getting a server
+### Step 7. Fill in the settings — the `.env` file
 
-The bot needs a **Linux VPS** with Docker and a public domain for webhooks
-(Telegram only accepts webhooks over HTTPS). Any provider works; we use
-**[Aeza](https://aeza.net/?ref=613643)** — fast, hourly-billed servers with data
-centers in Russia and Europe. Signing up via
-[this link](https://aeza.net/?ref=613643) also supports the project 💚
+Open it in an editor:
 
-Minimum requirements:
+```bash
+cd telegram-stars-bot
+nano .env
+```
 
-- Ubuntu 22.04+ / Debian 12+
-- 1 vCPU, 1 GB RAM, 10 GB disk
-- ports 80 and 443 open, a domain (A-record) pointing at the server IP
+Set at least these lines (leave the rest as-is):
+
+```dotenv
+BOT_TOKEN=123456789:AAE...           # from step 1
+WATA_TOKEN=your-wata-token           # from step 2
+WEBHOOK_HOST=bot.example.com         # from step 4 (no https:// and no trailing /)
+ADMIN_IDS=123456789                  # your Telegram ID (see below)
+MARKUP_PERCENT=20                    # your markup, %
+```
+
+**How to find your Telegram ID:** message [@userinfobot](https://t.me/userinfobot) —
+it replies with your number.
+
+Save in `nano`: **Ctrl+O** → **Enter**, exit: **Ctrl+X**.
+
+> 💎 Crypto (TON) payment can be enabled later — see the “(Optional) Crypto (TON)
+> payment” block below.
+
+---
+
+### Step 8. Enable HTTPS (required)
+
+Telegram only accepts webhooks over HTTPS. The easiest option is **Caddy** — it
+obtains and renews the SSL certificate for you.
+
+```bash
+# install Caddy (Ubuntu/Debian)
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install -y caddy
+```
+
+Open the config with `sudo nano /etc/caddy/Caddyfile` and add (replace the domain):
+
+```caddyfile
+bot.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Apply it: `sudo systemctl reload caddy`.
+
+> More detail (and an Nginx option) is in [🌐 Reverse proxy & HTTPS](#-reverse-proxy--https).
+
+---
+
+### Step 9. Start the bot
+
+```bash
+bash install.sh            # builds and starts the containers
+docker compose logs -f bot # watch the logs (exit with Ctrl+C)
+```
+
+You should see a line like:
+
+```
+INFO  app.main: telegram webhook set url=https://bot.example.com/tg/webhook
+```
+
+That means it works 🎉 (DB migrations run automatically on start).
+
+---
+
+### Step 10. Verify and set the WATA webhook
+
+1. Open your bot in Telegram and tap **/start** — the menu appears. The
+   **“🛠 Admin”** button shows up if your ID is in `ADMIN_IDS`.
+2. In the WATA dashboard, set the **webhook URL**:
+   ```
+   https://bot.example.com/wata/webhook
+   ```
+
+Done — the bot accepts orders and payments. 🚀
+
+---
+
+### (Optional) Crypto (TON) payment
+
+To add a second payment method — crypto via GreenGamePay — set these in `.env` and
+restart (`docker compose up -d`):
+
+```dotenv
+CRYPTO_ENABLED=true
+GGP_USERNAME=your-ggp-login
+GGP_PASSWORD=your-ggp-password
+GGP_TON_ADDRESS=ton-deposit-address        # from your GGP dashboard
+GGP_DEPOSIT_MEMO=your-ggp-login            # payment comment
+```
+
+See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the crypto economics.
+
+---
+
+### Something went wrong?
+
+- **Check the logs:** `docker compose logs -f bot`.
+- **Bot won't start** → usually `WEBHOOK_HOST` is empty. Make sure the domain opens
+  over `https://` in a browser (i.e. Caddy issued a certificate).
+- **No response in the bot** → make sure ports 80/443 are open and the domain's
+  A-record points at the server IP.
+- **Payments don't go through** → check `WATA_TOKEN` and that the WATA webhook URL is
+  correct (step 10). Common errors are in the [❓ FAQ](#-faq).
 
 ---
 
