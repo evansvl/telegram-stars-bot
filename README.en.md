@@ -20,6 +20,10 @@ bilingual — **Russian and English** — with on-the-fly switching.
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 &nbsp;
 ![License](https://img.shields.io/badge/License-MIT-111A2B?style=for-the-badge&logo=opensourceinitiative&logoColor=white)
+&nbsp;
+[![Telegram](https://img.shields.io/badge/Channel-@evansvl__stars-229ED9?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/evansvl_stars)
+
+**📢 Updates and announcements — on the Telegram channel [@evansvl_stars](https://t.me/evansvl_stars).**
 
 > ⚠️ A self-hosted server project. You deploy the bot on your own server and are
 > solely responsible for the legality of reselling Stars and for taxes. The
@@ -538,6 +542,12 @@ WATA delivers the stars, and your profit is the built-in margin.
 The “🌐 Language / Язык” menu button. The choice is saved
 per-user; on first contact the language is detected from the Telegram `language_code`
 (Russian by default).
+
+---
+
+## 📢 Follow updates
+
+New releases, fixes and announcements — on the Telegram channel **[@evansvl_stars](https://t.me/evansvl_stars)**.
 
 ---
 

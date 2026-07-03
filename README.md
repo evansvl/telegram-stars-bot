@@ -20,6 +20,10 @@ Stars, который вы разворачиваете на своём серв
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 &nbsp;
 ![License](https://img.shields.io/badge/License-MIT-111A2B?style=for-the-badge&logo=opensourceinitiative&logoColor=white)
+&nbsp;
+[![Telegram](https://img.shields.io/badge/Канал-@evansvl__stars-229ED9?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/evansvl_stars)
+
+**📢 Обновления и анонсы — в телеграм-канале [@evansvl_stars](https://t.me/evansvl_stars).**
 
 > ⚠️ Самостоятельный серверный проект. Вы разворачиваете бота на своём сервере
 > и сами отвечаете за легальность перепродажи Stars и налоги. С провайдером
@@ -536,6 +540,12 @@ GreenGamePay со своей, более низкой наценкой (`CRYPTO_
 **Как сменить язык бота?**
 Кнопка «🌐 Язык / Language» в меню. Выбор сохраняется per-user;
 при первом входе язык определяется по `language_code` Telegram (по умолчанию русский).
+
+---
+
+## 📢 Следить за обновлениями
+
+Новые версии, фиксы и анонсы — в телеграм-канале **[@evansvl_stars](https://t.me/evansvl_stars)**.
 
 ---
 
