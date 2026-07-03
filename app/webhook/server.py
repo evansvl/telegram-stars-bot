@@ -12,12 +12,9 @@ import logging
 from typing import Any
 
 from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiohttp import web
 
-from app.bot import keyboards
-from app.bot.i18n import t
+from app.bot.notify import notify_order_outcome
 from app.config import Settings
 from app.db.models import OrderStatusEnum
 from app.services import OrderService, PartnerService, ReferralService
@@ -93,44 +90,17 @@ async def _handle_webhook(request: web.Request) -> web.Response:
 
     notify_key = _NOTIFY_KEYS.get(order.status)
     if notify_key:
-        lang = await service.get_user_language(order.buyer_tg_id)
-        success = order.status in _SUCCESS_STATUSES
-        # Partner-bot orders must be notified through the partner's bot, not ours.
-        target_bot = bot
-        if order.bot_id and order.bot_id != bot.id:
-            pbot = await partner.get_bot(order.bot_id)
-            if pbot:
-                target_bot = Bot(
-                    pbot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-                )
-        try:
-            # On success, delete the order message to keep the chat clean.
-            if success and order.chat_id and order.message_id:
-                try:
-                    await target_bot.delete_message(order.chat_id, order.message_id)
-                except Exception:
-                    logger.debug("could not delete order message order_id=%s", order.order_id)
-            markup = keyboards.success_menu(lang) if success else keyboards.main_menu(lang)
-            await target_bot.send_message(
-                order.buyer_tg_id, t(notify_key, lang), reply_markup=markup
-            )
-        except Exception:
-            logger.exception("failed to notify buyer tg_id=%s", order.buyer_tg_id)
-        finally:
-            if target_bot is not bot:
-                await target_bot.session.close()
-
-    # Credit the buyer's referrer (idempotent) and notify them of the reward.
-    credited = await referral.credit_for_order(order)
-    if credited:
-        referrer_id, reward = credited
-        ref_lang = await service.get_user_language(referrer_id)
-        try:
-            await bot.send_message(
-                referrer_id, t("referral_earned_notify", ref_lang, amount=reward)
-            )
-        except Exception:
-            logger.exception("failed to notify referrer tg_id=%s", referrer_id)
+        # Notify the buyer (through the partner bot for partner orders) and credit
+        # the referrer/partner — shared with the TON poller.
+        await notify_order_outcome(
+            bot=bot,
+            service=service,
+            referral=referral,
+            partner=partner,
+            order=order,
+            success=order.status in _SUCCESS_STATUSES,
+            notify_key=notify_key,
+        )
 
     return web.Response(status=200, text="ok")
 

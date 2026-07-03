@@ -88,10 +88,24 @@ def count_presets(lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def confirm_payment(lang: str) -> InlineKeyboardMarkup:
+def choose_method(lang: str, *, crypto: bool) -> InlineKeyboardMarkup:
+    """Payment-method picker on the quote screen (card always; crypto if enabled)."""
     builder = InlineKeyboardBuilder()
-    builder.button(text=t("btn_pay", lang), callback_data="pay:confirm")
+    builder.button(text=t("btn_pay_card", lang), callback_data="pay:card")
+    if crypto:
+        builder.button(text=t("btn_pay_crypto", lang), callback_data="pay:crypto")
     builder.button(text=t("btn_cancel", lang), callback_data="buy:cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def crypto_instructions_kb(lang: str) -> InlineKeyboardMarkup:
+    """Shown with the TON payment instructions: support contact, back to menu."""
+    settings = get_settings()
+    builder = InlineKeyboardBuilder()
+    if settings.support_url:
+        builder.button(text=t("btn_support", lang), url=settings.support_url)
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
     builder.adjust(1)
     return builder.as_markup()
 

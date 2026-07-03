@@ -31,8 +31,31 @@ class Settings(BaseSettings):
     wata_public_key_url: str = "https://api.wata.pro/api/h2h/public-key"
 
     # Pricing
-    markup_percent: float = 20.0
+    markup_percent: float = 20.0  # card (WATA) markup
     auto_confirm: bool = True
+
+    # ── Crypto rail (TON via GreenGamePay) ───────────────────────
+    # A second payment method: the buyer pays in TON, we top up our GGP balance
+    # and deliver via GGP /api/buyStars. Crypto gets a cheaper star rate, so it
+    # has its OWN, lower markup (added on top of the GGP wholesale TON price).
+    crypto_enabled: bool = False
+    crypto_markup_percent: float = 10.0
+    # GreenGamePay credentials/host (secrets via env only, never committed).
+    ggp_username: str = ""
+    ggp_password: str = ""
+    ggp_base_url: str = "https://xn--h1aahgceagbyl.xn--p1ai"  # пополнистим.рф (IDNA)
+    # The TON deposit address buyers send to, and the comment that credits our
+    # GGP balance (the operator login). All buyers share these; we tell payments
+    # apart only by the exact (jittered) TON amount.
+    ggp_ton_address: str = ""
+    ggp_deposit_memo: str = "evansvl"
+    # TON chain scanning (toncenter v3). API key is optional but raises the limit.
+    ton_api_base: str = "https://toncenter.com/api/v3"
+    ton_api_key: str = ""
+    ton_poll_interval: int = 20  # seconds between chain polls
+    crypto_payment_ttl_min: int = 30  # how long a TON quote stays payable
+    # Each pending crypto order gets a unique TON amount, spaced by this step.
+    ton_amount_jitter_step: Decimal = Decimal("0.01")
 
     # Test mode: skip WATA entirely. Orders get a "mark as paid" button instead of
     # a real payment link, so the referral/partner flows can be tested end-to-end.
@@ -86,11 +109,11 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    @field_validator("markup_percent")
+    @field_validator("markup_percent", "crypto_markup_percent")
     @classmethod
     def _validate_markup(cls, value: float) -> float:
         if value < 0:
-            raise ValueError("MARKUP_PERCENT must be non-negative")
+            raise ValueError("markup percent must be non-negative")
         return value
 
     @property

@@ -64,6 +64,25 @@ a partner and a referrer (see below).
   otherwise the buyer's referrer earns 5%. There is no stacking, so "someone
   invites someone who invites someone" can never multiply a single order's payout.
 
+## Crypto rail (TON via GreenGamePay)
+
+Crypto is a **second, parallel** payment method with its **own** markup
+(`CRYPTO_MARKUP_PERCENT`), independent of the WATA card rail:
+
+- The buyer pays in **TON**. GGP gives a wholesale price per quantity as
+  `{ton, rub}`; the buyer pays `ton * (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`,
+  rounded up and then *jittered* by ±0.01 TON so each pending order has a unique
+  amount (that's how we identify who paid — everyone uses the same deposit address
+  and comment).
+- **No WATA +50% clamp here** — GGP has no such constraint, so the only ceiling on
+  a partner's crypto markup is what you choose to allow.
+- Crypto's star rate is cheaper than WATA's, so keep `CRYPTO_MARKUP_PERCENT` lower
+  than `MARKUP_PERCENT` while still clearing GGP's own spread; the buyer still pays
+  fewer ₽-equivalent than by card.
+- Earnings use the **₽-equivalent** (`rub * markup`): the referral 5% and the
+  partner share (minus `PARTNER_COMMISSION_PERCENT`) work exactly as on the card
+  rail, so the wallet/withdrawal math is currency-consistent.
+
 ## Recommendation
 
 - Keep **`MARKUP_PERCENT = 20`** with **`PARTNER_COMMISSION_PERCENT = 10`**. That
