@@ -101,10 +101,11 @@ def choose_method(lang: str, *, crypto: bool, card: bool = True) -> InlineKeyboa
 
 
 def crypto_instructions_kb(lang: str, order_id: str) -> InlineKeyboardMarkup:
-    """TON payment instructions: "I paid" (check now), support, back to menu."""
+    """TON payment instructions: "I paid" (check now), cancel, support, back to menu."""
     settings = get_settings()
     builder = InlineKeyboardBuilder()
     builder.button(text=t("btn_crypto_paid", lang), callback_data=f"crypto:paid:{order_id}")
+    builder.button(text=t("btn_crypto_cancel", lang), callback_data=f"crypto:cancel:{order_id}")
     if settings.support_url:
         builder.button(text=t("btn_support", lang), url=settings.support_url)
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")

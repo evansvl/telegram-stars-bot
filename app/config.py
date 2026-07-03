@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     # How often (seconds) the background worker checks the GGP balance and delivers
     # pending crypto orders (oldest first).
     ton_poll_interval: int = 20
-    crypto_payment_ttl_min: int = 30  # recommended pay-within window shown to buyer
+    # Buyers get this long to pay a crypto order; after it, the order is auto-cancelled
+    # (frees its TON amount and the buyer's one-pending-order slot). Shown to the buyer.
+    crypto_payment_ttl_min: int = 60
     # Each pending crypto order gets a unique TON amount, spaced by this step. Fine
     # granularity (0.001 TON) keeps amounts close to the real price and gives plenty
     # of distinct slots, so amounts look like 0.982, 0.983, … rather than round 0.01s.

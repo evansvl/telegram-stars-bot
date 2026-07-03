@@ -42,7 +42,7 @@ _WEB_BUYER_USERNAME = "web"
 
 _DELIVERED_STATUSES = {OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value}
 _FAILED_STATUSES = {OrderStatusEnum.FAIL.value, OrderStatusEnum.ERROR.value,
-                    OrderStatusEnum.REFUNDED.value}
+                    OrderStatusEnum.REFUNDED.value, OrderStatusEnum.EXPIRED.value}
 
 # Per-IP sliding-window rate limiter (single process, in-memory).
 _hits: dict[str, deque[float]] = defaultdict(deque)

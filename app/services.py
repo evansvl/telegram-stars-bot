@@ -10,6 +10,8 @@ from datetime import datetime
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
+
 from app.bot.i18n import DEFAULT_LANG, normalize_lang
 from app.config import Settings
 from app.db.models import (
@@ -485,36 +487,51 @@ class OrderService:
         chat_id: int | None = None,
         message_id: int | None = None,
     ) -> CreatedCryptoOrder:
-        """Persist a PENDING crypto order with a unique (jittered) TON amount."""
+        """Persist a PENDING crypto order with a unique (jittered) TON amount.
+
+        A partial unique index (migration 0008) hard-guarantees no two PENDING crypto
+        orders share a TON amount — under a rare concurrent collision the insert fails,
+        so we re-read the taken amounts and retry with the next free slot.
+        """
         order_id = uuid.uuid4().hex
         step = self._settings.ton_amount_jitter_step
-        async with self._db.session() as session:
-            users = UserRepository(session)
-            orders = OrderRepository(session)
-            await users.upsert(buyer_tg_id, buyer_username)
-            taken = await orders.outstanding_ton_amounts()
-            ton_amount = jitter_ton_amount(ton_due, taken, step=step)
-            await orders.create(
-                order_id=order_id,
-                buyer_tg_id=buyer_tg_id,
-                target_username=target_username,
-                count=count,
-                amount=rub_equiv,
-                status=OrderStatusEnum.PENDING.value,
-                provider="ggp",
-                ton_amount=ton_amount,
-                partner_owner_tg_id=partner_owner_tg_id,
-                partner_earning=partner_earning,
-                bot_id=bot_id,
-                chat_id=chat_id,
-                message_id=message_id,
-            )
-            await orders.update_status(
-                order_id,
-                status=OrderStatusEnum.PENDING.value,
-                price=rub_cost,
-                margin=(rub_equiv - rub_cost),
-            )
+        ton_amount = ton_due
+        for attempt in range(6):
+            try:
+                async with self._db.session() as session:
+                    users = UserRepository(session)
+                    orders = OrderRepository(session)
+                    await users.upsert(buyer_tg_id, buyer_username)
+                    taken = await orders.outstanding_ton_amounts()
+                    ton_amount = jitter_ton_amount(ton_due, taken, step=step)
+                    await orders.create(
+                        order_id=order_id,
+                        buyer_tg_id=buyer_tg_id,
+                        target_username=target_username,
+                        count=count,
+                        amount=rub_equiv,
+                        status=OrderStatusEnum.PENDING.value,
+                        provider="ggp",
+                        ton_amount=ton_amount,
+                        partner_owner_tg_id=partner_owner_tg_id,
+                        partner_earning=partner_earning,
+                        bot_id=bot_id,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    )
+                    await orders.update_status(
+                        order_id,
+                        status=OrderStatusEnum.PENDING.value,
+                        price=rub_cost,
+                        margin=(rub_equiv - rub_cost),
+                    )
+                break
+            except IntegrityError:
+                logger.warning(
+                    "TON amount %s taken, retrying (attempt %d)", ton_amount, attempt + 1
+                )
+        else:
+            raise RuntimeError("could not assign a unique TON amount after retries")
         logger.info(
             "crypto order created order_id=%s count=%d ton=%s", order_id, count, ton_amount
         )
@@ -528,6 +545,27 @@ class OrderService:
             target_username=target_username,
             ttl_min=self._settings.crypto_payment_ttl_min,
         )
+
+    @property
+    def crypto_payment_ttl_min(self) -> int:
+        return self._settings.crypto_payment_ttl_min
+
+    async def pending_crypto_order(self, buyer_tg_id: int) -> Order | None:
+        """The buyer's current unpaid crypto order (for the one-at-a-time guard)."""
+        async with self._db.session() as session:
+            return await OrderRepository(session).pending_crypto_order(buyer_tg_id)
+
+    async def cancel_crypto_order(self, order_id: str, buyer_tg_id: int) -> bool:
+        """Buyer-cancel their own pending crypto order (frees the amount + slot)."""
+        async with self._db.session() as session:
+            return await OrderRepository(session).cancel_pending_crypto(order_id, buyer_tg_id)
+
+    async def expire_stale_crypto(self) -> int:
+        """Auto-cancel crypto orders unpaid past the TTL. Returns how many."""
+        async with self._db.session() as session:
+            return await OrderRepository(session).expire_stale_crypto(
+                self._settings.crypto_payment_ttl_min
+            )
 
     async def oldest_pending_crypto(self) -> Order | None:
         """The oldest still-unpaid crypto order (FIFO delivery target)."""

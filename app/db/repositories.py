@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -434,6 +434,48 @@ class OrderRepository:
             .limit(1)
         )
         return result.scalars().first()
+
+    async def pending_crypto_order(self, buyer_tg_id: int) -> Order | None:
+        """The buyer's current unpaid crypto order, if any (one-at-a-time guard)."""
+        result = await self._session.execute(
+            select(Order)
+            .where(
+                Order.buyer_tg_id == buyer_tg_id,
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PENDING.value,
+            )
+            .order_by(Order.created_at.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
+    async def expire_stale_crypto(self, older_than_minutes: int) -> int:
+        """Auto-cancel PENDING crypto orders older than the TTL. Returns the count."""
+        cutoff = datetime.now(tz=UTC) - timedelta(minutes=older_than_minutes)
+        result = await self._session.execute(
+            update(Order)
+            .where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PENDING.value,
+                Order.created_at < cutoff,
+            )
+            .values(status=OrderStatusEnum.EXPIRED.value)
+        )
+        return result.rowcount or 0
+
+    async def cancel_pending_crypto(self, order_id: str, buyer_tg_id: int) -> bool:
+        """Buyer-cancel their own PENDING crypto order. Returns True if it was cancelled."""
+        result = await self._session.execute(
+            update(Order)
+            .where(
+                Order.order_id == order_id,
+                Order.buyer_tg_id == buyer_tg_id,
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PENDING.value,
+            )
+            .values(status=OrderStatusEnum.EXPIRED.value)
+        )
+        return (result.rowcount or 0) > 0
 
     async def count_active(self, buyer_tg_id: int, within_minutes: int = 60) -> int:
         """Recent unpaid orders for a buyer (matches WATA's concurrent-order limit).

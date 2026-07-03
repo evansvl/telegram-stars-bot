@@ -57,6 +57,12 @@ class CryptoDeliveryWorker:
             raise
 
     async def _tick(self) -> None:
+        # Auto-cancel orders left unpaid past the TTL first: frees their TON amount
+        # and the buyer's one-order slot, and keeps the FIFO queue from clogging.
+        expired = await self._service.expire_stale_crypto()
+        if expired:
+            logger.info("expired %d unpaid crypto order(s)", expired)
+
         order = await self._service.oldest_pending_crypto()
         if order is None:
             return

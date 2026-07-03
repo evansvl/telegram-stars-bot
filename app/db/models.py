@@ -35,6 +35,7 @@ class OrderStatusEnum(enum.StrEnum):
     REFUNDED = "Refunded"  # rejected / money returned
     FAIL = "Fail"  # fulfilment failed
     ERROR = "Error"  # bot-side failure creating the order
+    EXPIRED = "Expired"  # crypto order not paid within the TTL (auto-cancelled)
 
 
 class WithdrawalStatus(enum.StrEnum):

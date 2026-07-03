@@ -213,6 +213,25 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
     },
     "btn_crypto_paid": {"ru": "✅ Я оплатил", "en": "✅ I paid"},
+    "btn_crypto_cancel": {"ru": "❌ Отменить заказ", "en": "❌ Cancel order"},
+    "crypto_already_pending": {
+        "ru": (
+            "У вас уже есть незавершённый крипто-заказ. Оплатите его, отмените "
+            "или дождитесь автоотмены (~{ttl} мин) — потом можно создать новый."
+        ),
+        "en": (
+            "You already have an unpaid crypto order. Pay it, cancel it, or wait for "
+            "auto-cancel (~{ttl} min) — then you can create a new one."
+        ),
+    },
+    "crypto_cancelled": {
+        "ru": "Заказ отменён. Можно создать новый.",
+        "en": "Order cancelled. You can create a new one.",
+    },
+    "crypto_cancel_gone": {
+        "ru": "Этот заказ уже нельзя отменить (оплачен, выдан или отменён).",
+        "en": "This order can no longer be cancelled (paid, delivered or already cancelled).",
+    },
     "crypto_checking": {
         "ru": "Проверяю поступление средств…",
         "en": "Checking for your payment…",

@@ -494,13 +494,29 @@ async def cb_pay_crypto(
         return
 
     user = call.from_user
-    # Same concurrent-unpaid-order guard as card orders (crypto orders sit PENDING).
-    if await service.active_order_count(user.id) >= settings.max_active_orders:
-        await call.answer()
+    # One unpaid crypto order at a time: the buyer must pay it, cancel it, or wait
+    # for it to expire before starting another — this keeps the delivery queue clean
+    # and avoids two same-priced orders being satisfied by a single deposit.
+    existing = await service.pending_crypto_order(user.id)
+    if existing is not None:
+        # Re-show the unpaid order's details so they can pay or cancel it.
+        await call.answer(
+            t("crypto_already_pending", lang, ttl=service.crypto_payment_ttl_min),
+            show_alert=True,
+        )
         await _render(
             call,
-            t("too_many_orders", lang, limit=settings.max_active_orders),
-            keyboards.main_menu(lang),
+            t(
+                "crypto_instructions",
+                lang,
+                count=existing.count,
+                target=existing.target_username,
+                ton=existing.ton_amount,
+                address=settings.ggp_ton_address,
+                memo=settings.ggp_deposit_memo,
+                ttl=service.crypto_payment_ttl_min,
+            ),
+            keyboards.crypto_instructions_kb(lang, existing.order_id),
         )
         await state.clear()
         return
@@ -582,6 +598,25 @@ async def cb_crypto_paid(
         )
     elif outcome != "gone":
         await call.answer(t("crypto_not_funded", lang), show_alert=True)
+
+
+@router.callback_query(F.data.startswith("crypto:cancel:"))
+async def cb_crypto_cancel(
+    call: CallbackQuery,
+    service: OrderService,
+    partner: PartnerService,
+    settings: Settings,
+    lang: str,
+) -> None:
+    """Buyer cancels their pending crypto order, freeing the slot for a new one."""
+    if not call.from_user:
+        await call.answer()
+        return
+    order_id = (call.data or "").split(":")[-1]
+    cancelled = await service.cancel_crypto_order(order_id, call.from_user.id)
+    await call.answer(t("crypto_cancelled" if cancelled else "crypto_cancel_gone", lang))
+    text, markup = await _home_view(call, service, partner, settings, lang)
+    await _render(call, text, markup)
 
 
 @router.callback_query(F.data.startswith("testpay:"))
