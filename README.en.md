@@ -2,12 +2,16 @@
 
 **[🇷🇺 Русский](README.md) · 🇬🇧 English**
 
-# ⭐ Telegram Stars Bot
+# ⭐ Telegram Stars Bot — open-source bot to sell Telegram Stars
 
-**Sell Telegram Stars right inside your bot — with your own markup.**
-A user picks a recipient and the number of stars, pays by card or SBP, and the
-stars are delivered automatically. Payments and fulfilment go through WATA.
-The bot is bilingual: a **Russian and English** interface with on-the-fly switching.
+**A ready-made open-source bot and shop template for selling Telegram Stars with
+your own markup.** A user enters the recipient's `@username` and the number of
+stars, pays **by card, SBP or crypto (TON)**, and the stars are delivered
+automatically. In short — a ready-to-run script for auto-selling Telegram Stars
+that you deploy on your own server in ~30–40 minutes via the
+[step-by-step guide](#-step-by-step-install-for-beginners). Payments and delivery
+go through **WATA** (card/SBP) and **GreenGamePay** (TON). The interface is
+bilingual — **Russian and English** — with on-the-fly switching.
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 &nbsp;
@@ -478,6 +482,22 @@ start), prunes old images and prints the current version (git SHA).
 ---
 
 ## ❓ FAQ
+
+**How do I make a bot to sell Telegram Stars?**
+This is a ready-made open-source template for exactly that. Deploy it on your own
+server via the [step-by-step guide](#-step-by-step-install-for-beginners): create a
+bot in BotFather, get a WATA token, fill in `.env`, set up HTTPS — and your Stars shop
+is live. You set the markup yourself (`MARKUP_PERCENT`); stars are delivered automatically.
+
+**Is it a ready-to-run script/template or do I need to write code?**
+It's ready to run: payment acceptance (card/SBP/TON crypto), automatic star delivery, a
+referral program, partner bots and an admin panel are already included. You only need a
+server, a domain and tokens (BotFather + WATA). The code is open — tweak it if you want.
+
+**Can I sell stars for crypto (TON)?**
+Yes. Besides card/SBP via WATA, there's a second method — crypto (TON) via GreenGamePay
+with its own, lower markup (`CRYPTO_MARKUP_PERCENT`). See the “(Optional) Crypto (TON)
+payment” block in the install guide.
 
 **Payment went through, but the stars didn't arrive.**
 The bot notifies about payment automatically via the WATA webhook — there is no manual
