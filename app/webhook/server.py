@@ -19,6 +19,7 @@ from app.config import Settings
 from app.db.models import OrderStatusEnum
 from app.services import OrderService, PartnerService, ReferralService
 from app.wata.signature import SignatureVerifier
+from app.webhook.public_api import register_public_api
 
 logger = logging.getLogger(__name__)
 
@@ -127,4 +128,6 @@ def build_webhook_app(
     app["verifier"] = verifier
     app.router.add_post(settings.webhook_path, _handle_webhook)
     app.router.add_get("/health", _health)
+    if settings.public_api_enabled:
+        register_public_api(app)
     return app

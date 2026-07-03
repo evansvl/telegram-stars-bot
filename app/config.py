@@ -71,6 +71,20 @@ class Settings(BaseSettings):
     # JSON-decodes) and expose the parsed list via the admin_ids property below.
     admin_ids_raw: str = Field(default="", validation_alias="admin_ids")
 
+    # ── Public web API (for a website widget) ────────────────────
+    # Off by default. Set the allowed origins (your site's exact domains) to enable
+    # it: only browser requests from those origins are accepted (Origin check + CORS),
+    # which is what actually restricts it to "your site only" for a client-side widget.
+    # The optional IP allowlist is an extra gate (empty = off) for setups that proxy
+    # the API through a fixed backend.
+    public_api_allowed_origins_raw: str = Field(
+        default="", validation_alias="public_api_allowed_origins"
+    )
+    public_api_allowed_ips_raw: str = Field(
+        default="", validation_alias="public_api_allowed_ips"
+    )
+    public_api_rate_limit: int = 20  # max requests per client IP per minute
+
     # Infrastructure
     database_url: str = "postgresql+asyncpg://bot:bot@postgres:5432/wata_bot"
     redis_url: str = "redis://redis:6379/0"
@@ -142,6 +156,22 @@ class Settings(BaseSettings):
     def admin_ids(self) -> list[int]:
         """Admin Telegram IDs parsed from the comma-separated ADMIN_IDS env var."""
         return [int(part) for part in self.admin_ids_raw.replace(" ", "").split(",") if part]
+
+    @property
+    def public_api_allowed_origins(self) -> list[str]:
+        """Exact site origins allowed to call the public API (Origin/CORS allowlist)."""
+        raw = self.public_api_allowed_origins_raw
+        return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+    @property
+    def public_api_allowed_ips(self) -> list[str]:
+        """Optional extra IP allowlist for the public API (empty = disabled)."""
+        return [ip.strip() for ip in self.public_api_allowed_ips_raw.split(",") if ip.strip()]
+
+    @property
+    def public_api_enabled(self) -> bool:
+        """The public API is on only when at least one allowed origin is configured."""
+        return bool(self.public_api_allowed_origins)
 
     @property
     def public_base_url(self) -> str:

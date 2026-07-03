@@ -685,6 +685,10 @@ class OrderService:
         async with self._db.session() as session:
             return await OrderRepository(session).get_by_order_id(order_id)
 
+    async def get_order(self, order_id: str) -> Order | None:
+        """Fetch a stored order by id (used by the public web API for status polling)."""
+        return await self._get_local(order_id)
+
 
 # ── Referral program ─────────────────────────────────────────────
 
