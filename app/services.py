@@ -236,8 +236,12 @@ class OrderService:
         return self._rate_min_price
 
     async def star_rate(self, markup_percent: float) -> Decimal | None:
-        """Per-star price a buyer pays at ``markup_percent``: amount(50) / 50."""
-        min_price = await self._reference_min_price()
+        """Per-star price a buyer pays at ``markup_percent``: amount(50) / 50.
+
+        Reads the cached reference minPrice only — never blocks on the network, so
+        the menu stays responsive. ``refresh_rates`` (background) keeps it warm.
+        """
+        min_price = self._rate_min_price
         if min_price is None:
             return None
         quote = compute_amount(min_price, 50, markup_percent)
@@ -260,14 +264,31 @@ class OrderService:
         return self._ggp_rub_50
 
     async def crypto_star_rate(self) -> Decimal | None:
-        """Per-star ₽-equivalent on the crypto rail (GGP price + crypto markup)."""
+        """Per-star ₽-equivalent on the crypto rail (GGP price + crypto markup).
+
+        Cache-only, like ``star_rate`` — GGP can be slow (retries), so the menu must
+        never await it. ``refresh_rates`` (background) keeps the value warm.
+        """
         if not self.crypto_enabled:
             return None
-        rub = await self._reference_ggp_rub()
+        rub = self._ggp_rub_50
         if rub is None:
             return None
         per_star = crypto_rub_equiv(rub, self.crypto_markup_percent) / 50
         return per_star.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    async def refresh_rates(self) -> None:
+        """Fetch/refresh the displayed star-rate caches (WATA + GGP).
+
+        Called once at startup and then periodically by a background task, so the
+        menu always reads a warm cache instead of blocking a handler on a slow API.
+        The underlying getters no-op when the cache is still fresh (~1h) and keep
+        the last good value on failure.
+        """
+        if self.wata_enabled:
+            await self._reference_min_price()
+        if self.crypto_enabled:
+            await self._reference_ggp_rub()
 
     @property
     def markup_percent(self) -> float:

@@ -50,6 +50,23 @@ def _telegram_secret(settings: Settings) -> str:
     return hashlib.sha256(settings.bot_token.encode()).hexdigest()
 
 
+# How often the background task tops up the displayed star-rate caches (the values
+# themselves are considered fresh for ~1h; this loop also retries a failed first fetch).
+_RATE_REFRESH_INTERVAL = 900
+
+
+async def _refresh_rates_loop(service: OrderService) -> None:
+    """Refresh the displayed star rates now and every ``_RATE_REFRESH_INTERVAL``s."""
+    while True:
+        try:
+            await service.refresh_rates()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("star-rate refresh failed")
+        await asyncio.sleep(_RATE_REFRESH_INTERVAL)
+
+
 async def main() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
@@ -171,11 +188,18 @@ async def main() -> None:
         worker_task = asyncio.create_task(worker.run())
         logger.info("crypto rail enabled: delivering on GGP balance (buyStars)")
 
+    # Warm the displayed star-rate caches immediately and keep them warm in the
+    # background, so /start never blocks on a slow WATA/GGP call.
+    rate_task = asyncio.create_task(_refresh_rates_loop(service))
+
     stop_event = asyncio.Event()
     try:
         await stop_event.wait()
     finally:
         logger.info("shutting down")
+        rate_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await rate_task
         if worker_task:
             worker_task.cancel()
             with suppress(asyncio.CancelledError):
