@@ -29,7 +29,15 @@ from app.db.repositories import (
     WithdrawalRepository,
 )
 from app.db.session import Database
-from app.pricing import PriceQuote, compute_amount, estimated_margin
+from app.ggp.client import GgpClient
+from app.pricing import (
+    PriceQuote,
+    compute_amount,
+    compute_ton_due,
+    crypto_rub_equiv,
+    estimated_margin,
+    jitter_ton_amount,
+)
 from app.wata.client import WataClient
 from app.wata.models import StarPrice
 
@@ -104,15 +112,46 @@ class CreatedOrder:
     test: bool = False
 
 
+@dataclass(slots=True)
+class CryptoQuote:
+    """A crypto (TON) quote for ``count`` stars at a given total markup."""
+
+    ton_cost: Decimal  # GGP wholesale TON price
+    rub_cost: Decimal  # GGP wholesale RUB price (basis for ₽ earnings)
+    ton_due: Decimal  # TON the buyer pays (markup applied, pre-jitter)
+    rub_equiv: Decimal  # ₽-equivalent paid (for stats/referral)
+
+
+@dataclass(slots=True)
+class CreatedCryptoOrder:
+    order_id: str
+    ton_amount: Decimal  # exact (jittered) TON the buyer must send
+    address: str
+    memo: str
+    amount: Decimal
+    count: int
+    target_username: str
+    ttl_min: int
+
+
 class OrderService:
-    def __init__(self, settings: Settings, wata: WataClient, db: Database) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        wata: WataClient,
+        db: Database,
+        ggp: GgpClient | None = None,
+    ) -> None:
         self._settings = settings
         self._wata = wata
+        self._ggp = ggp
         self._db = db
         self._lang_cache: dict[int, str] = {}
         self._banned_cache: dict[int, bool] = {}
         self._rate_min_price: Decimal | None = None
         self._rate_fetched_at: float = 0.0
+        self._ggp_rub_50: Decimal | None = None
+        self._ggp_fetched_at: float = 0.0
 
     def is_admin(self, tg_id: int) -> bool:
         return self._settings.is_admin(tg_id)
@@ -179,9 +218,43 @@ class OrderService:
         quote = compute_amount(min_price, 50, markup_percent)
         return (quote.amount / 50).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+    async def _reference_ggp_rub(self) -> Decimal | None:
+        """Cached GGP RUB price for 50 stars; refreshed at most hourly."""
+        if self._ggp is None:
+            return None
+        fresh = (time.monotonic() - self._ggp_fetched_at) < 3600
+        if self._ggp_rub_50 is not None and fresh:
+            return self._ggp_rub_50
+        try:
+            price = await self._ggp.get_stars_price(50)
+        except Exception:
+            logger.warning("failed to refresh GGP rate; keeping cached value")
+            return self._ggp_rub_50
+        self._ggp_rub_50 = price.rub
+        self._ggp_fetched_at = time.monotonic()
+        return self._ggp_rub_50
+
+    async def crypto_star_rate(self) -> Decimal | None:
+        """Per-star ₽-equivalent on the crypto rail (GGP price + crypto markup)."""
+        if not self.crypto_enabled:
+            return None
+        rub = await self._reference_ggp_rub()
+        if rub is None:
+            return None
+        per_star = crypto_rub_equiv(rub, self.crypto_markup_percent) / 50
+        return per_star.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     @property
     def markup_percent(self) -> float:
         return self._settings.markup_percent
+
+    @property
+    def crypto_markup_percent(self) -> float:
+        return self._settings.crypto_markup_percent
+
+    @property
+    def crypto_enabled(self) -> bool:
+        return self._settings.crypto_enabled and self._ggp is not None
 
     # ── Language preferences ─────────────────────────────────────
 
@@ -326,6 +399,117 @@ class OrderService:
             count=count,
             target_username=target_username,
         )
+
+    # ── Crypto rail (TON via GreenGamePay) ───────────────────────
+
+    async def crypto_quote(self, count: int, total_markup_percent: float) -> CryptoQuote:
+        """Wholesale GGP price for ``count`` stars + our markup (TON the buyer pays)."""
+        assert self._ggp is not None, "crypto rail not configured"
+        price = await self._ggp.get_stars_price(count)
+        step = self._settings.ton_amount_jitter_step
+        ton_due = compute_ton_due(price.ton, total_markup_percent, step=step)
+        rub_equiv = crypto_rub_equiv(price.rub, total_markup_percent)
+        return CryptoQuote(
+            ton_cost=price.ton, rub_cost=price.rub, ton_due=ton_due, rub_equiv=rub_equiv
+        )
+
+    async def create_crypto_order(
+        self,
+        *,
+        buyer_tg_id: int,
+        buyer_username: str | None,
+        target_username: str,
+        count: int,
+        ton_due: Decimal,
+        rub_equiv: Decimal,
+        rub_cost: Decimal,
+        partner_owner_tg_id: int | None = None,
+        partner_earning: Decimal = Decimal("0"),
+        bot_id: int | None = None,
+        chat_id: int | None = None,
+        message_id: int | None = None,
+    ) -> CreatedCryptoOrder:
+        """Persist a PENDING crypto order with a unique (jittered) TON amount."""
+        order_id = uuid.uuid4().hex
+        step = self._settings.ton_amount_jitter_step
+        async with self._db.session() as session:
+            users = UserRepository(session)
+            orders = OrderRepository(session)
+            await users.upsert(buyer_tg_id, buyer_username)
+            taken = await orders.outstanding_ton_amounts()
+            ton_amount = jitter_ton_amount(ton_due, taken, step=step)
+            await orders.create(
+                order_id=order_id,
+                buyer_tg_id=buyer_tg_id,
+                target_username=target_username,
+                count=count,
+                amount=rub_equiv,
+                status=OrderStatusEnum.PENDING.value,
+                provider="ggp",
+                ton_amount=ton_amount,
+                partner_owner_tg_id=partner_owner_tg_id,
+                partner_earning=partner_earning,
+                bot_id=bot_id,
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+            await orders.update_status(
+                order_id,
+                status=OrderStatusEnum.PENDING.value,
+                price=rub_cost,
+                margin=(rub_equiv - rub_cost),
+            )
+        logger.info(
+            "crypto order created order_id=%s count=%d ton=%s", order_id, count, ton_amount
+        )
+        return CreatedCryptoOrder(
+            order_id=order_id,
+            ton_amount=ton_amount,
+            address=self._settings.ggp_ton_address,
+            memo=self._settings.ggp_deposit_memo,
+            amount=rub_equiv,
+            count=count,
+            target_username=target_username,
+            ttl_min=self._settings.crypto_payment_ttl_min,
+        )
+
+    async def match_crypto_payment(self, value_ton: Decimal) -> Order | None:
+        """Find a payable crypto order whose exact TON amount equals ``value_ton``."""
+        async with self._db.session() as session:
+            return await OrderRepository(session).get_pending_crypto_by_ton(value_ton)
+
+    async def deliver_ggp_order(self, order_id: str) -> Order | None:
+        """Claim a paid crypto order and deliver via GGP buyStars.
+
+        Idempotent: claims PENDING -> PAID first so a concurrent poll tick can't
+        double-deliver. Returns the order with its final status (SUCCESS on
+        delivery, ERROR on a delivery failure), or None if already claimed/unknown.
+        """
+        assert self._ggp is not None, "crypto rail not configured"
+        # Claim: PENDING -> PAID, so a concurrent poll tick can't double-deliver.
+        async with self._db.session() as session:
+            repo = OrderRepository(session)
+            order = await repo.get_by_order_id(order_id)
+            if order is None or order.status != OrderStatusEnum.PENDING.value:
+                return None
+            await repo.update_status(order_id, status=OrderStatusEnum.PAID.value)
+            target, count = order.target_username, order.count
+
+        try:
+            result = await self._ggp.buy_stars(target, count)
+        except Exception:
+            logger.exception("buyStars failed order_id=%s", order_id)
+            async with self._db.session() as session:
+                return await OrderRepository(session).update_status(
+                    order_id, status=OrderStatusEnum.ERROR.value
+                )
+
+        async with self._db.session() as session:
+            updated = await OrderRepository(session).update_status(
+                order_id, status=OrderStatusEnum.SUCCESS.value, ggp_tx_id=result.tx_id
+            )
+        logger.info("crypto order delivered order_id=%s tx=%s", order_id, result.tx_id)
+        return updated
 
     async def sync_order(
         self, order_id: str, raw_webhook: dict[str, Any] | None = None

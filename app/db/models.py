@@ -88,6 +88,12 @@ class Order(Base):
         Numeric(12, 2), default=Decimal("0"), nullable=False
     )
 
+    # Payment rail: "wata" (card) or "ggp" (crypto/TON). Crypto orders store the
+    # exact (jittered) TON the buyer must send and the GGP delivery tx id.
+    provider: Mapped[str] = mapped_column(String(8), default="wata", nullable=False)
+    ton_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 9), nullable=True)
+    ggp_tx_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     count: Mapped[int] = mapped_column(nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)

@@ -9,9 +9,14 @@ from app.pricing import (
     MAX_STARS,
     MIN_STARS,
     compute_amount,
+    compute_ton_due,
+    crypto_rub_equiv,
     estimated_margin,
     is_valid_count,
+    jitter_ton_amount,
 )
+
+_STEP = Decimal("0.01")
 
 
 def test_count_validation_bounds() -> None:
@@ -57,3 +62,39 @@ def test_estimated_margin() -> None:
     assert estimated_margin(Decimal("175.20"), Decimal("136.00"), Decimal("5.00")) == Decimal(
         "34.20"
     )
+
+
+# ── Crypto (TON / GreenGamePay) pricing ──────────────────────────
+
+
+def test_compute_ton_due_adds_markup_and_rounds_up_to_step() -> None:
+    # wholesale 0.4636 TON, +10% = 0.50996 -> rounded up to the 0.01 step.
+    due = compute_ton_due(Decimal("0.4636"), 10, step=_STEP)
+    assert due == Decimal("0.51")
+
+
+def test_compute_ton_due_zero_markup() -> None:
+    # 0.50 exactly -> stays on a step boundary.
+    assert compute_ton_due(Decimal("0.50"), 0, step=_STEP) == Decimal("0.50")
+
+
+def test_jitter_walks_to_first_free_slot() -> None:
+    base = Decimal("0.51")
+    assert jitter_ton_amount(base, set(), step=_STEP) == Decimal("0.51")
+    assert jitter_ton_amount(base, {Decimal("0.51")}, step=_STEP) == Decimal("0.52")
+    taken = {Decimal("0.51"), Decimal("0.52"), Decimal("0.53")}
+    assert jitter_ton_amount(base, taken, step=_STEP) == Decimal("0.54")
+
+
+def test_jitter_amounts_are_unique() -> None:
+    base = Decimal("1.00")
+    taken: set[Decimal] = set()
+    for _ in range(20):
+        amt = jitter_ton_amount(base, taken, step=_STEP)
+        assert amt not in taken
+        taken.add(amt)
+    assert len(taken) == 20
+
+
+def test_crypto_rub_equiv() -> None:
+    assert crypto_rub_equiv(Decimal("55.07"), 10) == Decimal("60.58")

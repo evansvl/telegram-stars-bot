@@ -80,6 +80,18 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "💱 Курс: 1 ⭐ ≈ <b>{rate} ₽</b>",
         "en": "💱 Rate: 1 ⭐ ≈ <b>{rate} ₽</b>",
     },
+    "star_rate_both": {
+        "ru": (
+            "💱 <b>Курс за 1 ⭐</b>\n"
+            "💳 Картой ≈ <b>{card} ₽</b>\n"
+            "💎 Криптой ≈ <b>{crypto} ₽</b> (выгоднее)"
+        ),
+        "en": (
+            "💱 <b>Rate per 1 ⭐</b>\n"
+            "💳 Card ≈ <b>{card} ₽</b>\n"
+            "💎 Crypto ≈ <b>{crypto} ₽</b> (cheaper)"
+        ),
+    },
     "cancelled": {"ru": "Отменено.", "en": "Cancelled."},
     "cancelled_menu": {
         "ru": "Отменено. Возвращаю в меню.",
@@ -151,6 +163,62 @@ TEXTS: dict[str, dict[str, str]] = {
             "To pay: <b>{amount} ₽</b>\n\n"
             "Tap “Pay” to get the payment link."
         ),
+    },
+    "quote_header": {
+        "ru": (
+            "🧾 <b>Проверьте заказ</b>\n\n"
+            "Получатель: <b>@{target}</b>\n"
+            "Количество: <b>{count}</b> ⭐"
+        ),
+        "en": (
+            "🧾 <b>Review your order</b>\n\n"
+            "Recipient: <b>@{target}</b>\n"
+            "Amount: <b>{count}</b> ⭐"
+        ),
+    },
+    "quote_line_card": {
+        "ru": "💳 Картой: <b>{card} ₽</b>",
+        "en": "💳 Card: <b>{card} ₽</b>",
+    },
+    "quote_line_crypto": {
+        "ru": "💎 Криптой (TON): <b>{ton} TON</b>",
+        "en": "💎 Crypto (TON): <b>{ton} TON</b>",
+    },
+    "quote_footer": {
+        "ru": "Выберите способ оплаты.",
+        "en": "Choose a payment method.",
+    },
+    "crypto_instructions": {
+        "ru": (
+            "💎 <b>Оплата криптой (TON)</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
+            "Отправьте <b>ровно</b> эту сумму одной транзакцией:\n"
+            "Сумма: <code>{ton}</code> TON\n"
+            "Адрес: <code>{address}</code>\n"
+            "Комментарий (memo): <code>{memo}</code>\n\n"
+            "⚠️ Сумма должна совпадать <b>точно</b> — так мы находим ваш платёж. "
+            "Не меняйте комментарий.\n"
+            "Звёзды придут автоматически после подтверждения в сети (обычно пара минут). "
+            "Реквизиты действуют ~{ttl} мин.\n\n"
+            "Оплатили, но звёзды не пришли? Напишите @nnstorecontactbot."
+        ),
+        "en": (
+            "💎 <b>Pay with crypto (TON)</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
+            "Send <b>exactly</b> this amount in a single transaction:\n"
+            "Amount: <code>{ton}</code> TON\n"
+            "Address: <code>{address}</code>\n"
+            "Comment (memo): <code>{memo}</code>\n\n"
+            "⚠️ The amount must match <b>exactly</b> — that's how we find your payment. "
+            "Don't change the comment.\n"
+            "Stars arrive automatically after network confirmation (usually a couple of "
+            "minutes). The details are valid for ~{ttl} min.\n\n"
+            "Paid but no stars? Message @nnstorecontactbot."
+        ),
+    },
+    "crypto_unavailable": {
+        "ru": "Оплата криптой временно недоступна. Попробуйте оплату картой.",
+        "en": "Crypto payment is temporarily unavailable. Please use card payment.",
     },
     "creating_order": {"ru": "Создаю заказ…", "en": "Creating the order…"},
     "too_many_orders": {
@@ -622,6 +690,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "❌ Не удалось исполнить заказ. Попробуйте снова.",
         "en": "❌ The order could not be fulfilled. Please try again.",
     },
+    "crypto_failed_contact": {
+        "ru": (
+            "⚠️ Мы получили вашу оплату, но не смогли автоматически отправить звёзды.\n"
+            "Напишите @nnstorecontactbot — мы всё решим."
+        ),
+        "en": (
+            "⚠️ We received your payment but couldn't deliver the stars automatically.\n"
+            "Message @nnstorecontactbot and we'll sort it out."
+        ),
+    },
     # ── WATA error messages ───────────────────────────────────
     "err_invalid_data": {
         "ru": "Переданы неверные данные заказа. Попробуйте ещё раз.",
@@ -664,6 +742,19 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "Произошла ошибка при обращении к платёжному сервису. Попробуйте позже.",
         "en": "An error occurred while contacting the payment service. Try again later.",
     },
+    # ── Crypto (GreenGamePay) error messages ──────────────────
+    "crypto_err_network": {
+        "ru": "Крипто-сервис временно недоступен. Попробуйте через минуту или оплатите картой.",
+        "en": "The crypto service is temporarily unavailable. Try again shortly or pay by card.",
+    },
+    "crypto_err_auth": {
+        "ru": "Ошибка авторизации крипто-сервиса. Попробуйте позже.",
+        "en": "Crypto service authorization error. Please try again later.",
+    },
+    "crypto_err_generic": {
+        "ru": "Ошибка крипто-сервиса. Попробуйте позже или оплатите картой.",
+        "en": "Crypto service error. Try again later or pay by card.",
+    },
     # ── Buttons ───────────────────────────────────────────────
     "btn_buy": {"ru": "⭐ Купить звёзды", "en": "⭐ Buy Stars"},
     "btn_orders": {"ru": "🧾 Мои заказы", "en": "🧾 My orders"},
@@ -704,6 +795,8 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn_custom": {"ru": "✏️ Ввести своё", "en": "✏️ Custom amount"},
     "btn_cancel": {"ru": "✖️ Отмена", "en": "✖️ Cancel"},
     "btn_pay": {"ru": "💳 Оплатить", "en": "💳 Pay"},
+    "btn_pay_card": {"ru": "💳 Картой", "en": "💳 Card"},
+    "btn_pay_crypto": {"ru": "💎 Криптой (TON)", "en": "💎 Crypto (TON)"},
     "btn_goto_pay": {"ru": "💳 Перейти к оплате", "en": "💳 Go to payment"},
     "btn_check": {"ru": "🔄 Проверить оплату", "en": "🔄 Check payment"},
     "btn_test_pay": {"ru": "✅ Я оплатил (ТЕСТ)", "en": "✅ I paid (TEST)"},

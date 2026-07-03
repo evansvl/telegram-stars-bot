@@ -14,6 +14,7 @@ MIN_STARS = 50
 MAX_STARS = 50_000
 MAX_MARKUP_MULTIPLIER = Decimal("1.5")
 _CENTS = Decimal("0.01")
+_NANOTON = Decimal("0.000000001")  # 1 nanoton — TON has 9 decimal places
 
 
 @dataclass(slots=True)
@@ -58,3 +59,46 @@ def compute_amount(min_price: Decimal, count: int, markup_percent: float) -> Pri
 def estimated_margin(amount: Decimal, price: Decimal, commission: Decimal) -> Decimal:
     """Our profit = amount paid by buyer − purchase price − WATA commission."""
     return (amount - price - commission).quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
+# ── Crypto rail (TON via GreenGamePay) ───────────────────────────
+# GGP gives a wholesale TON price per quantity. There is no WATA-style +50% clamp
+# here: we just add our markup on top. The buyer pays in TON; ₽ figures are kept
+# for stats/referral via ``crypto_rub_equiv``.
+
+
+def apply_markup(base: Decimal, markup_percent: float) -> Decimal:
+    """``base * (1 + markup/100)`` — shared by the TON and ₽ crypto helpers."""
+    factor = Decimal(1) + (Decimal(str(markup_percent)) / Decimal(100))
+    return base * factor
+
+
+def compute_ton_due(ton_cost: Decimal, markup_percent: float, *, step: Decimal) -> Decimal:
+    """TON the buyer must send: wholesale TON price + markup, rounded up to ``step``.
+
+    Rounding up to the jitter step (e.g. 0.01 TON) leaves room to nudge the amount
+    into a unique value per pending order (see ``jitter_ton_amount``).
+    """
+    desired = apply_markup(ton_cost, markup_percent)
+    stepped = (desired / step).quantize(Decimal(1), rounding=ROUND_UP) * step
+    return stepped.quantize(_NANOTON, rounding=ROUND_UP)
+
+
+def jitter_ton_amount(base: Decimal, taken: set[Decimal], *, step: Decimal) -> Decimal:
+    """Pick a unique TON amount near ``base``, spaced by ``step``, avoiding ``taken``.
+
+    Buyers all pay the same address+comment, so the exact amount is how we tell
+    them apart. Walk outward (base, +step, +2·step, …) to the first free slot.
+    """
+    base = base.quantize(_NANOTON, rounding=ROUND_UP)
+    candidate = base
+    bump = 0
+    while candidate in taken:
+        bump += 1
+        candidate = (base + step * bump).quantize(_NANOTON, rounding=ROUND_UP)
+    return candidate
+
+
+def crypto_rub_equiv(rub_cost: Decimal, markup_percent: float) -> Decimal:
+    """₽-equivalent the buyer effectively pays, stored for stats/referral math."""
+    return apply_markup(rub_cost, markup_percent).quantize(_CENTS, rounding=ROUND_HALF_UP)

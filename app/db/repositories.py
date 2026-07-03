@@ -318,6 +318,8 @@ class OrderRepository:
         count: int,
         amount: Decimal,
         status: str = OrderStatusEnum.NEW.value,
+        provider: str = "wata",
+        ton_amount: Decimal | None = None,
         partner_owner_tg_id: int | None = None,
         partner_earning: Decimal = Decimal("0"),
         bot_id: int | None = None,
@@ -331,6 +333,8 @@ class OrderRepository:
             count=count,
             amount=amount,
             status=status,
+            provider=provider,
+            ton_amount=ton_amount,
             partner_owner_tg_id=partner_owner_tg_id,
             partner_earning=partner_earning,
             bot_id=bot_id,
@@ -363,6 +367,7 @@ class OrderRepository:
         commission: Decimal | None = None,
         margin: Decimal | None = None,
         payment_link: str | None = None,
+        ggp_tx_id: str | None = None,
         raw_webhook: dict[str, Any] | None = None,
     ) -> Order | None:
         order = await self.get_by_order_id(order_id)
@@ -377,10 +382,41 @@ class OrderRepository:
             order.margin = margin
         if payment_link is not None:
             order.payment_link = payment_link
+        if ggp_tx_id is not None:
+            order.ggp_tx_id = ggp_tx_id
         if raw_webhook is not None:
             order.raw_webhook = raw_webhook
         await self._session.flush()
         return order
+
+    async def outstanding_ton_amounts(self) -> set[Decimal]:
+        """TON amounts of still-payable crypto orders (for jitter uniqueness)."""
+        result = await self._session.execute(
+            select(Order.ton_amount).where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PENDING.value,
+                Order.ton_amount.is_not(None),
+            )
+        )
+        return {row for row in result.scalars().all() if row is not None}
+
+    async def get_pending_crypto_by_ton(self, ton_amount: Decimal) -> Order | None:
+        """The oldest payable crypto order matching this exact TON amount, if any.
+
+        Returns the first match (not ``scalar_one``) so a rare jitter collision
+        between two concurrent orders can never raise MultipleResultsFound.
+        """
+        result = await self._session.execute(
+            select(Order)
+            .where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PENDING.value,
+                Order.ton_amount == ton_amount,
+            )
+            .order_by(Order.created_at.asc())
+            .limit(1)
+        )
+        return result.scalars().first()
 
     async def count_active(self, buyer_tg_id: int, within_minutes: int = 60) -> int:
         """Recent unpaid orders for a buyer (matches WATA's concurrent-order limit).

@@ -33,6 +33,7 @@ from app.bot.states import (
     WithdrawStates,
 )
 from app.config import Settings
+from app.ggp.errors import GgpError
 from app.pricing import MAX_STARS, MIN_STARS, compute_amount, is_valid_count
 from app.services import OrderService, PartnerService, ReferralService, WithdrawalError
 from app.wata.errors import WataError
@@ -82,10 +83,13 @@ async def _home_view(
     """Build the main-menu text (with the 1⭐ rate) and the context-aware keyboard."""
     user = event.from_user
     bot_id = event.bot.id if event.bot else 0
-    rate = await service.star_rate(service.markup_percent)
     text = t("welcome", lang)
-    if rate is not None:
-        text += "\n\n" + t("star_rate", lang, rate=rate)
+    card_rate = await service.star_rate(service.markup_percent)
+    crypto_rate = await service.crypto_star_rate()
+    if card_rate is not None and crypto_rate is not None:
+        text += "\n\n" + t("star_rate_both", lang, card=card_rate, crypto=crypto_rate)
+    elif card_rate is not None:
+        text += "\n\n" + t("star_rate", lang, rate=card_rate)
     is_owner = bool(user) and await partner.owner_of(bot_id) == user.id
     is_admin = bool(user) and settings.is_admin(user.id)
     return text, keyboards.main_menu(lang, owner_settings=is_owner, admin=is_admin)
@@ -244,34 +248,69 @@ async def _show_quote(
 
     # Buyers pay the operator's price (admin "topup" pays the WATA floor). On a
     # partner bot the buyer also pays the partner's own markup on top, and the
-    # partner earns it minus the operator's cut.
+    # partner earns it minus the operator's cut. Two rails: card (WATA) and, when
+    # enabled, crypto (TON via GGP) — each with its own markup.
     min_price = Decimal(str(min_price_raw))
     bot_id = event.bot.id if event.bot else 0
     no_markup = bool(data.get("no_markup"))
     operator = 0.0 if no_markup else service.markup_percent
 
     partner_owner = None if no_markup else await partner.owner_of(bot_id)
-    if partner_owner is not None:
-        partner_markup = await partner.partner_markup(bot_id)
-        quote = compute_amount(min_price, count, operator + float(partner_markup))
-        base = compute_amount(min_price, count, operator)
-        partner_earning = partner.partner_share(quote.amount - base.amount)
-    else:
-        quote = compute_amount(min_price, count, operator)
-        partner_earning = Decimal("0")
+    partner_markup = (
+        await partner.partner_markup(bot_id) if partner_owner is not None else Decimal("0")
+    )
 
-    await state.update_data(
-        count=count,
-        amount=str(quote.amount),
-        partner_owner=partner_owner,
-        partner_earning=str(partner_earning),
-    )
+    # ── Card (WATA) ──
+    if partner_owner is not None:
+        card_quote = compute_amount(min_price, count, operator + float(partner_markup))
+        base = compute_amount(min_price, count, operator)
+        card_partner_earning = partner.partner_share(card_quote.amount - base.amount)
+    else:
+        card_quote = compute_amount(min_price, count, operator)
+        card_partner_earning = Decimal("0")
+
+    fsm: dict[str, object] = {
+        "count": count,
+        "card_amount": str(card_quote.amount),
+        "partner_owner": partner_owner,
+        "card_partner_earning": str(card_partner_earning),
+    }
+
+    # ── Crypto (TON via GGP), best-effort: fall back to card-only on failure ──
+    crypto_ton: Decimal | None = None
+    if service.crypto_enabled:
+        crypto_operator = 0.0 if no_markup else service.crypto_markup_percent
+        try:
+            cq = await service.crypto_quote(count, crypto_operator + float(partner_markup))
+        except GgpError:
+            logger.warning("GGP quote failed; offering card only")
+        else:
+            crypto_partner_earning = (
+                partner.partner_share(cq.rub_cost * partner_markup / Decimal("100"))
+                if partner_owner is not None
+                else Decimal("0")
+            )
+            crypto_ton = cq.ton_due
+            fsm.update(
+                crypto_ton_due=str(cq.ton_due),
+                crypto_rub_equiv=str(cq.rub_equiv),
+                crypto_rub_cost=str(cq.rub_cost),
+                crypto_partner_earning=str(crypto_partner_earning),
+            )
+
+    await state.update_data(**fsm)
     await state.set_state(BuyStates.confirm_payment)
-    await _render(
-        event,
-        t("quote", lang, target=target, count=count, amount=quote.amount),
-        keyboards.confirm_payment(lang),
+    lines = [t("quote_line_card", lang, card=card_quote.amount)]
+    if crypto_ton is not None:
+        lines.append(t("quote_line_crypto", lang, ton=crypto_ton))
+    text = (
+        t("quote_header", lang, target=target, count=count)
+        + "\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+        + t("quote_footer", lang)
     )
+    await _render(event, text, keyboards.choose_method(lang, crypto=crypto_ton is not None))
 
 
 @router.callback_query(BuyStates.waiting_count, F.data.startswith("count:"))
@@ -318,7 +357,7 @@ async def on_custom_count(
     await _show_quote(message, state, service, partner, count, lang)
 
 
-@router.callback_query(BuyStates.confirm_payment, F.data == "pay:confirm")
+@router.callback_query(BuyStates.confirm_payment, F.data == "pay:card")
 async def cb_pay(
     call: CallbackQuery,
     state: FSMContext,
@@ -329,7 +368,7 @@ async def cb_pay(
     data = await state.get_data()
     target = data.get("target_username")
     count = data.get("count")
-    amount = data.get("amount")
+    amount = data.get("card_amount")
     if not (target and count and amount) or not call.from_user:
         await call.answer(t("session_expired_alert", lang), show_alert=True)
         await state.clear()
@@ -349,7 +388,7 @@ async def cb_pay(
 
     await call.answer(t("creating_order", lang))
     partner_owner = data.get("partner_owner")
-    partner_earning = Decimal(str(data.get("partner_earning", "0")))
+    partner_earning = Decimal(str(data.get("card_partner_earning", "0")))
     # Remember the order message so the payment webhook can delete it on success.
     msg = call.message if isinstance(call.message, Message) else None
     # Send the buyer back to *this* bot after paying (works for partner bots too).
@@ -401,6 +440,75 @@ async def cb_pay(
             amount=created.amount,
         ),
         keyboards.payment_link(created.payment_link, created.order_id, lang),
+    )
+
+
+@router.callback_query(BuyStates.confirm_payment, F.data == "pay:crypto")
+async def cb_pay_crypto(
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    settings: Settings,
+    lang: str,
+) -> None:
+    data = await state.get_data()
+    target = data.get("target_username")
+    count = data.get("count")
+    ton_due = data.get("crypto_ton_due")
+    rub_equiv = data.get("crypto_rub_equiv")
+    rub_cost = data.get("crypto_rub_cost")
+    if not (target and count and ton_due and rub_equiv) or not call.from_user:
+        await call.answer(t("session_expired_alert", lang), show_alert=True)
+        await state.clear()
+        return
+    if not service.crypto_enabled:
+        await call.answer(t("crypto_unavailable", lang), show_alert=True)
+        return
+
+    user = call.from_user
+    # Same concurrent-unpaid-order guard as card orders (crypto orders sit PENDING).
+    if await service.active_order_count(user.id) >= settings.max_active_orders:
+        await call.answer()
+        await _render(
+            call,
+            t("too_many_orders", lang, limit=settings.max_active_orders),
+            keyboards.main_menu(lang),
+        )
+        await state.clear()
+        return
+
+    await call.answer(t("creating_order", lang))
+    partner_owner = data.get("partner_owner")
+    partner_earning = Decimal(str(data.get("crypto_partner_earning", "0")))
+    msg = call.message if isinstance(call.message, Message) else None
+    created = await service.create_crypto_order(
+        buyer_tg_id=user.id,
+        buyer_username=user.username,
+        target_username=str(target),
+        count=int(count),
+        ton_due=Decimal(str(ton_due)),
+        rub_equiv=Decimal(str(rub_equiv)),
+        rub_cost=Decimal(str(rub_cost or "0")),
+        partner_owner_tg_id=int(partner_owner) if partner_owner else None,
+        partner_earning=partner_earning,
+        bot_id=call.bot.id if call.bot else None,
+        chat_id=msg.chat.id if msg else None,
+        message_id=msg.message_id if msg else None,
+    )
+    await state.clear()
+    await _render(
+        call,
+        t(
+            "crypto_instructions",
+            lang,
+            count=created.count,
+            target=created.target_username,
+            ton=created.ton_amount,
+            address=created.address,
+            memo=created.memo,
+            ttl=created.ttl_min,
+        ),
+        keyboards.crypto_instructions_kb(lang),
     )
 
 

@@ -34,7 +34,9 @@ The bot is bilingual: a **Russian and English** interface with on-the-fly switch
 | ⭐ | **Sell Telegram Stars** | Buy stars for any @username (from 50 to 50,000) via the WATA Digital Goods API |
 | 💰 | **Configurable margin** | Markup over the minimum price via `MARKUP_PERCENT`, clamped to +50% |
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
-| 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API |
+| 💎 | **Crypto (TON) payment** | A second rail: pay in TON via GreenGamePay with its **own** markup (`CRYPTO_MARKUP_PERCENT`). The bot scans the TON chain, matches the payment by its exact amount and delivers via `buyStars` |
+| 💱 | **Two ⭐ rates** | The menu shows both rates: card (WATA) and crypto/GGP (cheaper) |
+| 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API; toncenter polling for crypto |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
 | 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
@@ -127,8 +129,17 @@ land in the repository.
 | `WATA_TOKEN` | yes | Merchant token from the WATA dashboard |
 | `WATA_BASE_URL` | — | Digital Goods API base (default `https://dg-api.wata.pro/api`) |
 | `WATA_PUBLIC_KEY_URL` | — | URL of the WATA public key for webhook signature verification |
-| `MARKUP_PERCENT` | — | Markup over `minPrice` in %, result clamped to +50% (default `20`) |
+| `MARKUP_PERCENT` | — | Markup over `minPrice` in % (card/WATA), result clamped to +50% (default `20`) |
 | `AUTO_CONFIRM` | — | `true` — auto-confirm star delivery after payment |
+| `CRYPTO_ENABLED` | — | `true` — enable the second rail: crypto (TON) via GreenGamePay |
+| `CRYPTO_MARKUP_PERCENT` | — | Markup for crypto payment in % (its own, usually lower; no +50% clamp) |
+| `GGP_USERNAME` / `GGP_PASSWORD` | for crypto | GreenGamePay credentials (via `.env` only) |
+| `GGP_BASE_URL` | — | GGP API base (default `пополнистим.рф` in IDNA form) |
+| `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (shared by all buyers) |
+| `GGP_DEPOSIT_MEMO` | — | Payment comment = your GGP login (default `evansvl`) |
+| `TON_API_BASE` / `TON_API_KEY` | — | toncenter v3 chain scanner (key optional, raises limits) |
+| `TON_POLL_INTERVAL` | — | TON chain poll interval in seconds (default `20`) |
+| `CRYPTO_PAYMENT_TTL_MIN` | — | Validity of a quoted TON amount in minutes (default `30`) |
 | `ADMIN_IDS` | — | Comma-separated Telegram IDs of admins (for `/stats`) |
 | `DATABASE_URL` | — | PostgreSQL DSN (compose already points it at the `postgres` service) |
 | `REDIS_URL` | — | Redis DSN (compose points it at the `redis` service) |
@@ -160,6 +171,15 @@ minPrice × count  ≤  amount  ≤  minPrice × count × 1.5   (at most +50%)
 
 Your profit = `amount − price − commission` (the purchase price and WATA commission
 come back in the order-creation response and are stored in the DB as `margin`).
+
+**Crypto (TON via GGP)** is a separate rail with its own markup and no WATA clamp.
+GGP returns a wholesale `{ton, rub}` price per quantity; the buyer pays
+`ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up and nudged by
+±0.01 TON so each order has a **unique amount** (everyone pays one address with one
+comment — we tell payments apart by the amount). The bot polls toncenter, matches
+the payment and delivers via GGP `buyStars`. If a buyer paid but no stars arrived,
+the bot tells them to contact **@nnstorecontactbot**. See
+[docs/ECONOMICS.md](docs/ECONOMICS.md) for the math.
 
 ---
 

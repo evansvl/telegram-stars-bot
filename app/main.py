@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from contextlib import suppress
 
 import aiohttp
 from aiogram import Bot, Dispatcher
@@ -30,8 +31,11 @@ from app.bot.handlers import router
 from app.bot.middleware import LanguageMiddleware
 from app.config import Settings, get_settings
 from app.db.session import Database
+from app.ggp.client import GgpClient
 from app.logging_config import setup_logging
 from app.services import OrderService, PartnerService, ReferralService
+from app.ton.poller import TonPoller
+from app.ton.scanner import TonScanner
 from app.wata.client import WataClient
 from app.wata.signature import SignatureVerifier
 from app.webhook.server import build_webhook_app
@@ -69,7 +73,13 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     wata = WataClient(settings.wata_base_url, settings.wata_token, session)
-    service = OrderService(settings, wata, db)
+    # Crypto (TON via GreenGamePay) is an optional second rail.
+    ggp: GgpClient | None = None
+    if settings.crypto_enabled and settings.ggp_username and settings.ggp_password:
+        ggp = GgpClient(
+            settings.ggp_base_url, settings.ggp_username, settings.ggp_password, session
+        )
+    service = OrderService(settings, wata, db, ggp)
     referral = ReferralService(settings, db)
     partner = PartnerService(settings, db)
     verifier = SignatureVerifier(settings.wata_public_key_url, session)
@@ -139,11 +149,41 @@ async def main() -> None:
         except Exception:
             logger.exception("failed to set webhook for partner bot %s", pb.bot_id)
 
+    # Crypto rail: watch the TON deposit address and deliver via GGP buyStars.
+    poller_task: asyncio.Task[None] | None = None
+    poller_redis = None
+    if ggp and settings.ggp_ton_address:
+        from redis.asyncio import Redis
+
+        poller_redis = Redis.from_url(settings.redis_url)
+        scanner = TonScanner(
+            settings.ton_api_base, settings.ton_api_key, settings.ggp_ton_address, session
+        )
+        poller = TonPoller(
+            settings=settings,
+            scanner=scanner,
+            service=service,
+            referral=referral,
+            partner=partner,
+            bot=bot,
+            redis=poller_redis,
+        )
+        poller_task = asyncio.create_task(poller.run())
+        logger.info("crypto rail enabled: TON poller watching %s", settings.ggp_ton_address)
+    elif settings.crypto_enabled:
+        logger.warning("CRYPTO_ENABLED but GGP creds/TON address missing — crypto rail off")
+
     stop_event = asyncio.Event()
     try:
         await stop_event.wait()
     finally:
         logger.info("shutting down")
+        if poller_task:
+            poller_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await poller_task
+        if poller_redis is not None:
+            await poller_redis.aclose()
         try:
             await bot.delete_webhook()
         except Exception:
