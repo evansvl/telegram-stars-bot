@@ -92,6 +92,13 @@ class UserRepository:
         )
         return list(result.scalars().all())
 
+    async def list_page(self, offset: int, limit: int) -> list[User]:
+        """A page of users, newest first."""
+        result = await self._session.execute(
+            select(User).order_by(User.created_at.desc()).offset(offset).limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def find_by_username(self, username: str) -> User | None:
         """Look a user up by @username (case-insensitive), without the leading @."""
         return await self._session.scalar(
@@ -409,18 +416,13 @@ class OrderRepository:
         )
         return {row for row in result.scalars().all() if row is not None}
 
-    async def get_pending_crypto_by_ton(self, ton_amount: Decimal) -> Order | None:
-        """The oldest payable crypto order matching this exact TON amount, if any.
-
-        Returns the first match (not ``scalar_one``) so a rare jitter collision
-        between two concurrent orders can never raise MultipleResultsFound.
-        """
+    async def oldest_pending_crypto(self) -> Order | None:
+        """The oldest still-unpaid crypto order (FIFO delivery target)."""
         result = await self._session.execute(
             select(Order)
             .where(
                 Order.provider == "ggp",
                 Order.status == OrderStatusEnum.PENDING.value,
-                Order.ton_amount == ton_amount,
             )
             .order_by(Order.created_at.asc())
             .limit(1)

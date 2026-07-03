@@ -88,10 +88,11 @@ def count_presets(lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def choose_method(lang: str, *, crypto: bool) -> InlineKeyboardMarkup:
-    """Payment-method picker on the quote screen (card always; crypto if enabled)."""
+def choose_method(lang: str, *, crypto: bool, card: bool = True) -> InlineKeyboardMarkup:
+    """Payment-method picker on the quote screen (card and/or crypto)."""
     builder = InlineKeyboardBuilder()
-    builder.button(text=t("btn_pay_card", lang), callback_data="pay:card")
+    if card:
+        builder.button(text=t("btn_pay_card", lang), callback_data="pay:card")
     if crypto:
         builder.button(text=t("btn_pay_crypto", lang), callback_data="pay:crypto")
     builder.button(text=t("btn_cancel", lang), callback_data="buy:cancel")
@@ -99,10 +100,11 @@ def choose_method(lang: str, *, crypto: bool) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def crypto_instructions_kb(lang: str) -> InlineKeyboardMarkup:
-    """Shown with the TON payment instructions: support contact, back to menu."""
+def crypto_instructions_kb(lang: str, order_id: str) -> InlineKeyboardMarkup:
+    """TON payment instructions: "I paid" (check now), support, back to menu."""
     settings = get_settings()
     builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_crypto_paid", lang), callback_data=f"crypto:paid:{order_id}")
     if settings.support_url:
         builder.button(text=t("btn_support", lang), url=settings.support_url)
     builder.button(text=t("btn_menu", lang), callback_data="menu:show")
@@ -281,24 +283,41 @@ def admin_back(lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def admin_users_kb(users: list, lang: str) -> InlineKeyboardMarkup:
-    """Recent-users list: each user, a search button, and back to the panel."""
+def admin_users_kb(
+    users: list, lang: str, *, page: int = 0, has_next: bool = False
+) -> InlineKeyboardMarkup:
+    """A page of users, prev/next nav, search, and back to the panel.
+
+    The page number rides along in each user's callback so the profile view knows
+    which page to return to.
+    """
     builder = InlineKeyboardBuilder()
     for u in users:
         label = f"@{u.username}" if u.username else str(u.tg_id)
-        builder.button(text=label, callback_data=f"admin:user:{u.tg_id}")
+        builder.button(text=label, callback_data=f"admin:user:{u.tg_id}:{page}")
+    # Pagination row (only the arrows that make sense).
+    nav = []
+    if page > 0:
+        nav.append(("btn_page_prev", f"admin:users:{page - 1}"))
+    if has_next:
+        nav.append(("btn_page_next", f"admin:users:{page + 1}"))
+    for key, data in nav:
+        builder.button(text=t(key, lang), callback_data=data)
     builder.button(text=t("btn_admin_search", lang), callback_data="admin:search")
     builder.button(text=t("btn_back", lang), callback_data="admin:show")
-    builder.adjust(1)
+    # One row for the nav arrows, one per everything else.
+    counts = [1] * len(users) + ([len(nav)] if nav else []) + [1, 1]
+    builder.adjust(*counts)
     return builder.as_markup()
 
 
-def admin_user_actions(uid: int, banned: bool, lang: str) -> InlineKeyboardMarkup:
+def admin_user_actions(uid: int, banned: bool, lang: str, *, page: int = 0) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if banned:
-        builder.button(text=t("btn_unban", lang), callback_data=f"admin:unban:{uid}")
+        builder.button(text=t("btn_unban", lang), callback_data=f"admin:unban:{uid}:{page}")
     else:
-        builder.button(text=t("btn_ban", lang), callback_data=f"admin:ban:{uid}")
+        builder.button(text=t("btn_ban", lang), callback_data=f"admin:ban:{uid}:{page}")
+    builder.button(text=t("btn_admin_users_back", lang), callback_data=f"admin:users:{page}")
     builder.button(text=t("btn_admin", lang), callback_data="admin:show")
     builder.adjust(1)
     return builder.as_markup()

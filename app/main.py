@@ -35,8 +35,7 @@ from app.db.session import Database
 from app.ggp.client import GgpClient
 from app.logging_config import setup_logging
 from app.services import OrderService, PartnerService, ReferralService
-from app.ton.poller import TonPoller
-from app.ton.scanner import TonScanner
+from app.ton.poller import CryptoDeliveryWorker
 from app.wata.client import WataClient
 from app.wata.signature import SignatureVerifier
 from app.webhook.server import build_webhook_app
@@ -100,6 +99,8 @@ async def main() -> None:
     dp["service"] = service
     dp["referral"] = referral
     dp["partner"] = partner
+    # The main bot, so handlers on partner bots can still notify via it.
+    dp["main_bot"] = bot
 
     tg_secret = _telegram_secret(settings)
 
@@ -156,27 +157,18 @@ async def main() -> None:
         finally:
             await child.session.close()
 
-    # Crypto rail: watch the TON deposit address and deliver via GGP buyStars.
-    poller_task: asyncio.Task[None] | None = None
-    poller_redis = None
+    # Crypto rail: deliver pending crypto orders once the GGP balance covers them.
+    worker_task: asyncio.Task[None] | None = None
     if ggp and settings.ggp_ton_address:
-        from redis.asyncio import Redis
-
-        poller_redis = Redis.from_url(settings.redis_url)
-        scanner = TonScanner(
-            settings.ton_api_base, settings.ton_api_key, settings.ggp_ton_address, session
-        )
-        poller = TonPoller(
+        worker = CryptoDeliveryWorker(
             settings=settings,
-            scanner=scanner,
             service=service,
             referral=referral,
             partner=partner,
             bot=bot,
-            redis=poller_redis,
         )
-        poller_task = asyncio.create_task(poller.run())
-        logger.info("crypto rail enabled: TON poller watching %s", settings.ggp_ton_address)
+        worker_task = asyncio.create_task(worker.run())
+        logger.info("crypto rail enabled: delivering on GGP balance (buyStars)")
     elif settings.crypto_enabled:
         logger.warning("CRYPTO_ENABLED but GGP creds/TON address missing — crypto rail off")
 
@@ -185,12 +177,10 @@ async def main() -> None:
         await stop_event.wait()
     finally:
         logger.info("shutting down")
-        if poller_task:
-            poller_task.cancel()
+        if worker_task:
+            worker_task.cancel()
             with suppress(asyncio.CancelledError):
-                await poller_task
-        if poller_redis is not None:
-            await poller_redis.aclose()
+                await worker_task
         try:
             await bot.delete_webhook()
         except Exception:

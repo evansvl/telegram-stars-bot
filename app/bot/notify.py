@@ -16,10 +16,37 @@ from aiogram.enums import ParseMode
 
 from app.bot import keyboards
 from app.bot.i18n import t
-from app.db.models import Order
+from app.db.models import Order, OrderStatusEnum
 from app.services import OrderService, PartnerService, ReferralService
 
 logger = logging.getLogger(__name__)
+
+
+async def _notify_admins_purchase(bot: Bot, service: OrderService, order: Order) -> None:
+    """Tell every admin about a completed purchase (once, on delivery)."""
+    buyer = f"@{order.buyer.username}" if order.buyer and order.buyer.username else str(
+        order.buyer_tg_id
+    )
+    for admin_id in service.admin_ids:
+        if admin_id == order.buyer_tg_id:
+            continue
+        lang = await service.get_user_language(admin_id)
+        method = t(f"pay_method_{order.provider}", lang)
+        try:
+            await bot.send_message(
+                admin_id,
+                t(
+                    "admin_purchase_notify",
+                    lang,
+                    count=order.count,
+                    target=order.target_username,
+                    amount=order.amount,
+                    buyer=buyer,
+                    method=method,
+                ),
+            )
+        except Exception:
+            logger.exception("failed to notify admin tg_id=%s", admin_id)
 
 
 async def notify_order_outcome(
@@ -62,11 +89,26 @@ async def notify_order_outcome(
 
     credited = await referral.credit_for_order(order)
     if credited:
-        referrer_id, reward = credited
-        ref_lang = await service.get_user_language(referrer_id)
-        try:
-            await bot.send_message(
-                referrer_id, t("referral_earned_notify", ref_lang, amount=reward)
+        earner_id, reward = credited
+        earn_lang = await service.get_user_language(earner_id)
+        # A partner-bot sale pays the bot's owner their markup; a normal sale pays
+        # the buyer's referrer. Tell each with the right wording.
+        is_partner = bool(order.partner_owner_tg_id) and earner_id == order.partner_owner_tg_id
+        if is_partner:
+            notify_earn = t(
+                "partner_earned_notify",
+                earn_lang,
+                amount=reward,
+                count=order.count,
+                target=order.target_username,
             )
+        else:
+            notify_earn = t("referral_earned_notify", earn_lang, amount=reward)
+        try:
+            await bot.send_message(earner_id, notify_earn)
         except Exception:
-            logger.exception("failed to notify referrer tg_id=%s", referrer_id)
+            logger.exception("failed to notify earner tg_id=%s", earner_id)
+
+    # Tell admins about the sale, once, when stars are actually delivered.
+    if order.status == OrderStatusEnum.SUCCESS.value:
+        await _notify_admins_purchase(bot, service, order)

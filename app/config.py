@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     # Telegram
     bot_token: str = Field(..., min_length=1)
 
-    # WATA Digital Goods API
-    wata_token: str = Field(..., min_length=1)
+    # WATA Digital Goods API (card/SBP rail). Optional when CRYPTO_ONLY is on.
+    wata_token: str = ""
     wata_base_url: str = "https://dg-api.wata.pro/api"
     wata_public_key_url: str = "https://api.wata.pro/api/h2h/public-key"
 
@@ -35,25 +35,28 @@ class Settings(BaseSettings):
     auto_confirm: bool = True
 
     # ── Crypto rail (TON via GreenGamePay) ───────────────────────
-    # A second payment method: the buyer pays in TON, we top up our GGP balance
-    # and deliver via GGP /api/buyStars. Crypto gets a cheaper star rate, so it
+    # A payment method where the buyer pays in TON to our GGP deposit address,
+    # which tops up our GGP balance; we then deliver via GGP /api/buyStars.
+    # Delivery is gated on the GGP balance (check_balance), not on scanning the
+    # chain — the operator always receives the funds, so as soon as the balance
+    # covers the purchase, buyStars runs. Crypto gets a cheaper star rate, so it
     # has its OWN, lower markup (added on top of the GGP wholesale TON price).
     crypto_enabled: bool = False
+    # Crypto-only mode: no WATA (card) rail at all — for operators without WATA.
+    crypto_only: bool = False
     crypto_markup_percent: float = 10.0
     # GreenGamePay credentials/host (secrets via env only, never committed).
     ggp_username: str = ""
     ggp_password: str = ""
     ggp_base_url: str = "https://xn--h1aahgceagbyl.xn--p1ai"  # пополнистим.рф (IDNA)
     # The TON deposit address buyers send to, and the comment that credits our
-    # GGP balance (the operator login). All buyers share these; we tell payments
-    # apart only by the exact (jittered) TON amount.
+    # GGP balance (the operator login). Shown to the buyer as payment details.
     ggp_ton_address: str = ""
     ggp_deposit_memo: str = "evansvl"
-    # TON chain scanning (toncenter v3). API key is optional but raises the limit.
-    ton_api_base: str = "https://toncenter.com/api/v3"
-    ton_api_key: str = ""
-    ton_poll_interval: int = 20  # seconds between chain polls
-    crypto_payment_ttl_min: int = 30  # how long a TON quote stays payable
+    # How often (seconds) the background worker checks the GGP balance and delivers
+    # pending crypto orders (oldest first).
+    ton_poll_interval: int = 20
+    crypto_payment_ttl_min: int = 30  # recommended pay-within window shown to buyer
     # Each pending crypto order gets a unique TON amount, spaced by this step.
     ton_amount_jitter_step: Decimal = Decimal("0.01")
 
@@ -115,6 +118,16 @@ class Settings(BaseSettings):
         if value < 0:
             raise ValueError("markup percent must be non-negative")
         return value
+
+    @model_validator(mode="after")
+    def _validate_rails(self) -> Settings:
+        """At least one working payment rail must be configured."""
+        if self.crypto_only:
+            if not self.crypto_enabled:
+                raise ValueError("CRYPTO_ONLY requires CRYPTO_ENABLED=true")
+        elif not self.wata_token:
+            raise ValueError("WATA_TOKEN is required (or enable CRYPTO_ONLY)")
+        return self
 
     @property
     def admin_ids(self) -> list[int]:

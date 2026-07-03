@@ -25,6 +25,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKey
 
 from app.bot import keyboards
 from app.bot.i18n import normalize_lang, status_label, t, withdrawal_status_label
+from app.bot.notify import notify_order_outcome
 from app.bot.states import (
     AdminStates,
     AdminWithdrawStates,
@@ -84,10 +85,13 @@ async def _home_view(
     user = event.from_user
     bot_id = event.bot.id if event.bot else 0
     text = t("welcome", lang)
-    card_rate = await service.star_rate(service.markup_percent)
+    # No card rate in crypto-only mode (no WATA).
+    card_rate = None if service.crypto_only else await service.star_rate(service.markup_percent)
     crypto_rate = await service.crypto_star_rate()
     if card_rate is not None and crypto_rate is not None:
         text += "\n\n" + t("star_rate_both", lang, card=card_rate, crypto=crypto_rate)
+    elif crypto_rate is not None:
+        text += "\n\n" + t("star_rate_crypto", lang, rate=crypto_rate)
     elif card_rate is not None:
         text += "\n\n" + t("star_rate", lang, rate=card_rate)
     is_owner = bool(user) and await partner.owner_of(bot_id) == user.id
@@ -191,10 +195,22 @@ async def _set_target_username(
     username: str,
     lang: str,
 ) -> None:
-    """Validate a recipient @username via WATA and advance to the count step."""
+    """Validate a recipient @username and advance to the count step.
+
+    Card mode validates the username via WATA (and caches its ``minPrice``); in
+    crypto-only mode there's no WATA, so we accept a well-formed @username and let
+    GGP validate it at delivery time.
+    """
     username = username.strip().lstrip("@")
     if not _USERNAME_RE.match(username):
         await _render(event, t("username_invalid", lang), keyboards.ask_username_kb(lang))
+        return
+    if service.crypto_only:
+        await state.update_data(target_username=username, min_price=None)
+        await state.set_state(BuyStates.waiting_count)
+        await _render(
+            event, t("user_found", lang, username=username), keyboards.count_presets(lang)
+        )
         return
     try:
         price = await service.get_star_price(username)
@@ -240,50 +256,49 @@ async def _show_quote(
 ) -> None:
     data = await state.get_data()
     target = data.get("target_username")
-    min_price_raw = data.get("min_price")
-    if not target or min_price_raw is None:
+    if not target:
         await _render(event, t("session_expired", lang), keyboards.main_menu(lang))
         await state.clear()
         return
 
-    # Buyers pay the operator's price (admin "topup" pays the WATA floor). On a
-    # partner bot the buyer also pays the partner's own markup on top, and the
-    # partner earns it minus the operator's cut. Two rails: card (WATA) and, when
-    # enabled, crypto (TON via GGP) — each with its own markup.
-    min_price = Decimal(str(min_price_raw))
+    # Buyers pay the operator's price (admin "topup" pays the floor). On a partner
+    # bot the buyer also pays the partner's own markup on top, and the partner earns
+    # it minus the operator's cut. Rails: card (WATA) and crypto (TON via GGP), each
+    # with its own markup. In crypto-only mode there's no card rail.
     bot_id = event.bot.id if event.bot else 0
     no_markup = bool(data.get("no_markup"))
-    operator = 0.0 if no_markup else service.markup_percent
-
     partner_owner = None if no_markup else await partner.owner_of(bot_id)
     partner_markup = (
         await partner.partner_markup(bot_id) if partner_owner is not None else Decimal("0")
     )
 
+    fsm: dict[str, object] = {"count": count, "partner_owner": partner_owner}
+
     # ── Card (WATA) ──
-    if partner_owner is not None:
-        card_quote = compute_amount(min_price, count, operator + float(partner_markup))
-        base = compute_amount(min_price, count, operator)
-        card_partner_earning = partner.partner_share(card_quote.amount - base.amount)
-    else:
-        card_quote = compute_amount(min_price, count, operator)
-        card_partner_earning = Decimal("0")
+    card_amount: Decimal | None = None
+    min_price_raw = data.get("min_price")
+    if not service.crypto_only and min_price_raw is not None:
+        min_price = Decimal(str(min_price_raw))
+        operator = 0.0 if no_markup else service.markup_percent
+        if partner_owner is not None:
+            card_quote = compute_amount(min_price, count, operator + float(partner_markup))
+            base = compute_amount(min_price, count, operator)
+            card_partner_earning = partner.partner_share(card_quote.amount - base.amount)
+        else:
+            card_quote = compute_amount(min_price, count, operator)
+            card_partner_earning = Decimal("0")
+        card_amount = card_quote.amount
+        fsm["card_amount"] = str(card_amount)
+        fsm["card_partner_earning"] = str(card_partner_earning)
 
-    fsm: dict[str, object] = {
-        "count": count,
-        "card_amount": str(card_quote.amount),
-        "partner_owner": partner_owner,
-        "card_partner_earning": str(card_partner_earning),
-    }
-
-    # ── Crypto (TON via GGP), best-effort: fall back to card-only on failure ──
+    # ── Crypto (TON via GGP), best-effort ──
     crypto_ton: Decimal | None = None
     if service.crypto_enabled:
         crypto_operator = 0.0 if no_markup else service.crypto_markup_percent
         try:
             cq = await service.crypto_quote(count, crypto_operator + float(partner_markup))
         except GgpError:
-            logger.warning("GGP quote failed; offering card only")
+            logger.warning("GGP quote failed")
         else:
             crypto_partner_earning = (
                 partner.partner_share(cq.rub_cost * partner_markup / Decimal("100"))
@@ -298,9 +313,18 @@ async def _show_quote(
                 crypto_partner_earning=str(crypto_partner_earning),
             )
 
+    if card_amount is None and crypto_ton is None:
+        # Nothing to offer (e.g. crypto-only and the GGP quote failed).
+        key = "crypto_unavailable" if service.crypto_only else "session_expired"
+        await _render(event, t(key, lang), keyboards.main_menu(lang))
+        await state.clear()
+        return
+
     await state.update_data(**fsm)
     await state.set_state(BuyStates.confirm_payment)
-    lines = [t("quote_line_card", lang, card=card_quote.amount)]
+    lines: list[str] = []
+    if card_amount is not None:
+        lines.append(t("quote_line_card", lang, card=card_amount))
     if crypto_ton is not None:
         lines.append(t("quote_line_crypto", lang, ton=crypto_ton))
     text = (
@@ -310,7 +334,11 @@ async def _show_quote(
         + "\n\n"
         + t("quote_footer", lang)
     )
-    await _render(event, text, keyboards.choose_method(lang, crypto=crypto_ton is not None))
+    await _render(
+        event,
+        text,
+        keyboards.choose_method(lang, card=card_amount is not None, crypto=crypto_ton is not None),
+    )
 
 
 @router.callback_query(BuyStates.waiting_count, F.data.startswith("count:"))
@@ -508,8 +536,52 @@ async def cb_pay_crypto(
             memo=created.memo,
             ttl=created.ttl_min,
         ),
-        keyboards.crypto_instructions_kb(lang),
+        keyboards.crypto_instructions_kb(lang, created.order_id),
     )
+
+
+@router.callback_query(F.data.startswith("crypto:paid:"))
+async def cb_crypto_paid(
+    call: CallbackQuery,
+    main_bot: Bot,
+    service: OrderService,
+    referral: ReferralService,
+    partner: PartnerService,
+    lang: str,
+) -> None:
+    """Buyer says they paid: check the GGP balance and deliver if funded."""
+    order_id = (call.data or "").split(":")[-1]
+    if not service.crypto_enabled:
+        await call.answer(t("crypto_unavailable", lang), show_alert=True)
+        return
+    await call.answer(t("crypto_checking", lang))
+    try:
+        delivered, outcome = await service.try_deliver_crypto(order_id)
+    except GgpError:
+        await call.answer(t("crypto_err_network", lang), show_alert=True)
+        return
+    if outcome == "delivered" and delivered is not None:
+        await notify_order_outcome(
+            bot=main_bot,
+            service=service,
+            referral=referral,
+            partner=partner,
+            order=delivered,
+            success=True,
+            notify_key="notify_Success",
+        )
+    elif outcome == "failed" and delivered is not None:
+        await notify_order_outcome(
+            bot=main_bot,
+            service=service,
+            referral=referral,
+            partner=partner,
+            order=delivered,
+            success=False,
+            notify_key="crypto_failed_contact",
+        )
+    elif outcome != "gone":
+        await call.answer(t("crypto_not_funded", lang), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("testpay:"))
@@ -1179,6 +1251,24 @@ async def cb_admin_topup(
     await call.answer()
 
 
+ADMIN_USERS_PAGE_SIZE = 6
+
+
+async def _show_users_page(event: Message | CallbackQuery, service: OrderService, lang: str,
+                          page: int) -> None:
+    """Render one page of the user browser (fetches one extra to detect a next page)."""
+    page = max(0, page)
+    rows = await service.list_users_page(page * ADMIN_USERS_PAGE_SIZE, ADMIN_USERS_PAGE_SIZE + 1)
+    has_next = len(rows) > ADMIN_USERS_PAGE_SIZE
+    users = rows[:ADMIN_USERS_PAGE_SIZE]
+    header = "admin_users_header" if users else "admin_users_empty"
+    await _render(
+        event,
+        t(header, lang),
+        keyboards.admin_users_kb(users, lang, page=page, has_next=has_next),
+    )
+
+
 @router.callback_query(F.data == "admin:finduser")
 async def cb_admin_finduser(
     call: CallbackQuery, state: FSMContext, service: OrderService, settings: Settings, lang: str
@@ -1187,9 +1277,20 @@ async def cb_admin_finduser(
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await state.clear()
-    users = await service.recent_users(6)
-    header = "admin_users_header" if users else "admin_users_empty"
-    await _render(call, t(header, lang), keyboards.admin_users_kb(users, lang))
+    await _show_users_page(call, service, lang, 0)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("admin:users:"))
+async def cb_admin_users_page(
+    call: CallbackQuery, state: FSMContext, service: OrderService, settings: Settings, lang: str
+) -> None:
+    if not _is_admin_call(call, settings):
+        await call.answer(t("admin_only", lang), show_alert=True)
+        return
+    await state.clear()
+    page = int((call.data or "").split(":")[-1])
+    await _show_users_page(call, service, lang, page)
     await call.answer()
 
 
@@ -1216,8 +1317,10 @@ async def cb_admin_user(
     if not _is_admin_call(call, settings):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
-    uid = int((call.data or "").split(":")[-1])
-    await _show_admin_user(call, service, referral, uid, lang)
+    parts = (call.data or "").split(":")
+    uid = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
+    await _show_admin_user(call, service, referral, uid, lang, page=page)
     await call.answer()
 
 
@@ -1227,6 +1330,8 @@ async def _show_admin_user(
     referral: ReferralService,
     uid: int,
     lang: str,
+    *,
+    page: int = 0,
 ) -> None:
     user = await service.get_user(uid)
     if user is None:
@@ -1250,7 +1355,7 @@ async def _show_admin_user(
         earned=ov.earned,
         available=ov.available,
     )
-    await _render(event, text, keyboards.admin_user_actions(uid, user.banned, lang))
+    await _render(event, text, keyboards.admin_user_actions(uid, user.banned, lang, page=page))
 
 
 @router.message(AdminStates.entering_user_id, F.text)
@@ -1294,10 +1399,12 @@ async def cb_admin_ban(
     if not _is_admin_call(call, settings):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
-    uid = int((call.data or "").split(":")[-1])
+    parts = (call.data or "").split(":")
+    uid = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
     await service.set_banned(uid, True)
     await call.answer(t("admin_user_banned", lang))
-    await _show_admin_user(call, service, referral, uid, lang)
+    await _show_admin_user(call, service, referral, uid, lang, page=page)
 
 
 @router.callback_query(F.data.startswith("admin:unban:"))
@@ -1311,10 +1418,12 @@ async def cb_admin_unban(
     if not _is_admin_call(call, settings):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
-    uid = int((call.data or "").split(":")[-1])
+    parts = (call.data or "").split(":")
+    uid = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
     await service.set_banned(uid, False)
     await call.answer(t("admin_user_unbanned", lang))
-    await _show_admin_user(call, service, referral, uid, lang)
+    await _show_admin_user(call, service, referral, uid, lang, page=page)
 
 
 @router.message(BuyStates.waiting_username)

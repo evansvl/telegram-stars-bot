@@ -134,6 +134,26 @@ class CreatedCryptoOrder:
     ttl_min: int
 
 
+# Keywords that mark a GGP buyStars failure as "not enough balance yet" (retryable)
+# rather than a permanent error (e.g. invalid username).
+_INSUFFICIENT_HINTS = (
+    "баланс",
+    "недостаточно",
+    "средств",
+    "попол",
+    "insufficient",
+    "balance",
+    "not enough",
+    "no funds",
+)
+
+
+def _looks_insufficient(exc: Exception) -> bool:
+    message = getattr(exc, "message", "") or str(exc)
+    lowered = message.lower()
+    return any(hint in lowered for hint in _INSUFFICIENT_HINTS)
+
+
 class OrderService:
     def __init__(
         self,
@@ -185,6 +205,11 @@ class OrderService:
     async def recent_users(self, limit: int = 6) -> list[User]:
         async with self._db.session() as session:
             return await UserRepository(session).recent(limit)
+
+    async def list_users_page(self, offset: int, limit: int) -> list[User]:
+        """A page of users, newest first (for the admin browser)."""
+        async with self._db.session() as session:
+            return await UserRepository(session).list_page(offset, limit)
 
     async def find_user_by_username(self, username: str) -> User | None:
         async with self._db.session() as session:
@@ -254,13 +279,22 @@ class OrderService:
 
     @property
     def crypto_enabled(self) -> bool:
-        # Require a deposit address too: without it buyers can't pay and the TON
-        # poller (app/main.py) won't start, so the rail must stay hidden.
+        # Require a deposit address too: without it buyers can't pay and the
+        # balance worker (app/main.py) won't start, so the rail must stay hidden.
         return (
             self._settings.crypto_enabled
             and self._ggp is not None
             and bool(self._settings.ggp_ton_address)
         )
+
+    @property
+    def crypto_only(self) -> bool:
+        """No card (WATA) rail — only crypto is offered."""
+        return self._settings.crypto_only and self.crypto_enabled
+
+    @property
+    def admin_ids(self) -> list[int]:
+        return self._settings.admin_ids
 
     # ── Language preferences ─────────────────────────────────────
 
@@ -479,20 +513,43 @@ class OrderService:
             ttl_min=self._settings.crypto_payment_ttl_min,
         )
 
-    async def match_crypto_payment(self, value_ton: Decimal) -> Order | None:
-        """Find a payable crypto order whose exact TON amount equals ``value_ton``."""
+    async def oldest_pending_crypto(self) -> Order | None:
+        """The oldest still-unpaid crypto order (FIFO delivery target)."""
         async with self._db.session() as session:
-            return await OrderRepository(session).get_pending_crypto_by_ton(value_ton)
+            return await OrderRepository(session).oldest_pending_crypto()
+
+    async def try_deliver_crypto(self, order_id: str) -> tuple[Order | None, str]:
+        """Deliver a crypto order if the GGP balance covers it.
+
+        The operator always receives the TON, so we don't scan the chain: we check
+        the GGP balance and, if there are funds, run buyStars. Returns
+        ``(order, outcome)`` where outcome is one of ``delivered`` / ``failed``
+        (permanent) / ``not_funded`` (retryable) / ``gone``.
+        """
+        assert self._ggp is not None, "crypto rail not configured"
+        balance = await self._ggp.check_balance()  # raises GgpError on network issues
+        if balance <= 0:
+            return None, "not_funded"
+        order = await self.deliver_ggp_order(order_id)
+        if order is None:
+            return None, "gone"
+        if order.status == OrderStatusEnum.SUCCESS.value:
+            return order, "delivered"
+        if order.status == OrderStatusEnum.ERROR.value:
+            return order, "failed"
+        return order, "not_funded"  # reverted to PENDING (funds not enough yet)
 
     async def deliver_ggp_order(self, order_id: str) -> Order | None:
         """Claim a paid crypto order and deliver via GGP buyStars.
 
-        Idempotent: claims PENDING -> PAID first so a concurrent poll tick can't
-        double-deliver. Returns the order with its final status (SUCCESS on
-        delivery, ERROR on a delivery failure), or None if already claimed/unknown.
+        Idempotent: claims PENDING -> PAID first so a concurrent poll tick / button
+        press can't double-deliver. On a buyStars failure the order is reverted to
+        PENDING when it looks like insufficient balance (so it can be retried once
+        the deposit lands), otherwise marked ERROR (a real, permanent failure, e.g.
+        an invalid username — which also unblocks FIFO delivery). Returns the order
+        with its final status, or None if already claimed/unknown.
         """
         assert self._ggp is not None, "crypto rail not configured"
-        # Claim: PENDING -> PAID, so a concurrent poll tick can't double-deliver.
         async with self._db.session() as session:
             repo = OrderRepository(session)
             order = await repo.get_by_order_id(order_id)
@@ -503,12 +560,16 @@ class OrderService:
 
         try:
             result = await self._ggp.buy_stars(target, count)
-        except Exception:
-            logger.exception("buyStars failed order_id=%s", order_id)
+        except Exception as exc:
+            retryable = _looks_insufficient(exc)
+            new_status = (
+                OrderStatusEnum.PENDING.value if retryable else OrderStatusEnum.ERROR.value
+            )
+            logger.warning(
+                "buyStars failed order_id=%s retryable=%s: %s", order_id, retryable, exc
+            )
             async with self._db.session() as session:
-                return await OrderRepository(session).update_status(
-                    order_id, status=OrderStatusEnum.ERROR.value
-                )
+                return await OrderRepository(session).update_status(order_id, status=new_status)
 
         async with self._db.session() as session:
             updated = await OrderRepository(session).update_status(

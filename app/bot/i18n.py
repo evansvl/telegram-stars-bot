@@ -192,29 +192,44 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": (
             "💎 <b>Оплата криптой (TON)</b>\n\n"
             "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
-            "Отправьте <b>ровно</b> эту сумму одной транзакцией:\n"
+            "Отправьте эту сумму одной транзакцией:\n"
             "Сумма: <code>{ton}</code> TON\n"
-            "Адрес: <code>{address}</code>\n"
-            "Комментарий (memo): <code>{memo}</code>\n\n"
-            "⚠️ Сумма должна совпадать <b>точно</b> — так мы находим ваш платёж. "
-            "Не меняйте комментарий.\n"
-            "Звёзды придут автоматически после подтверждения в сети (обычно пара минут). "
+            "Адрес: <code>{address}</code>\n\n"
+            "После оплаты нажмите «✅ Я оплатил» — как только средства поступят, "
+            "звёзды придут автоматически (обычно пара минут).\n"
             "Рекомендуем оплатить в течение ~{ttl} мин.\n\n"
             "Оплатили, но звёзды не пришли? Напишите @nnstorecontactbot."
         ),
         "en": (
             "💎 <b>Pay with crypto (TON)</b>\n\n"
             "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
-            "Send <b>exactly</b> this amount in a single transaction:\n"
+            "Send this amount in a single transaction:\n"
             "Amount: <code>{ton}</code> TON\n"
-            "Address: <code>{address}</code>\n"
-            "Comment (memo): <code>{memo}</code>\n\n"
-            "⚠️ The amount must match <b>exactly</b> — that's how we find your payment. "
-            "Don't change the comment.\n"
-            "Stars arrive automatically after network confirmation (usually a couple of "
-            "minutes). We recommend paying within ~{ttl} min.\n\n"
+            "Address: <code>{address}</code>\n\n"
+            "After paying, tap “✅ I paid” — once the funds arrive, the stars are "
+            "delivered automatically (usually a couple of minutes).\n"
+            "We recommend paying within ~{ttl} min.\n\n"
             "Paid but no stars? Message @nnstorecontactbot."
         ),
+    },
+    "btn_crypto_paid": {"ru": "✅ Я оплатил", "en": "✅ I paid"},
+    "crypto_checking": {
+        "ru": "Проверяю поступление средств…",
+        "en": "Checking for your payment…",
+    },
+    "crypto_not_funded": {
+        "ru": (
+            "Пока не вижу средств. Если вы только что оплатили — подождите пару минут "
+            "и нажмите ещё раз. Звёзды придут автоматически."
+        ),
+        "en": (
+            "No funds yet. If you just paid, wait a couple of minutes and tap again. "
+            "The stars will be delivered automatically."
+        ),
+    },
+    "star_rate_crypto": {
+        "ru": "💎 Курс: <b>1</b> ⭐ = <b>{rate} ₽</b> (оплата криптой TON)",
+        "en": "💎 Rate: <b>1</b> ⭐ = <b>{rate} ₽</b> (pay with TON crypto)",
     },
     "crypto_unavailable": {
         "ru": "Оплата криптой временно недоступна. Попробуйте оплату картой.",
@@ -368,6 +383,16 @@ TEXTS: dict[str, dict[str, str]] = {
     "referral_earned_notify": {
         "ru": "🤝 Вам начислено <b>{amount} ₽</b> по партнёрской программе!",
         "en": "🤝 You earned <b>{amount} ₽</b> from the referral program!",
+    },
+    "partner_earned_notify": {
+        "ru": (
+            "🤝 Продажа через вашего бота: <b>{count}</b> ⭐ для <b>@{target}</b>.\n"
+            "Вам начислено <b>{amount} ₽</b>!"
+        ),
+        "en": (
+            "🤝 Sale via your bot: <b>{count}</b> ⭐ for <b>@{target}</b>.\n"
+            "You earned <b>{amount} ₽</b>!"
+        ),
     },
     # ── Withdrawals (user) ────────────────────────────────────
     "withdraw_choose_method": {
@@ -631,6 +656,27 @@ TEXTS: dict[str, dict[str, str]] = {
     "admin_users_empty": {
         "ru": "Пользователей пока нет. Нажмите «Поиск», чтобы найти по ID/@username.",
         "en": "No users yet. Tap “Search” to look up by ID/@username.",
+    },
+    "btn_page_prev": {"ru": "◀️ Назад", "en": "◀️ Prev"},
+    "btn_page_next": {"ru": "Вперёд ▶️", "en": "Next ▶️"},
+    "btn_admin_users_back": {"ru": "⬅️ К списку пользователей", "en": "⬅️ Back to users"},
+    "pay_method_wata": {"ru": "картой (WATA)", "en": "card (WATA)"},
+    "pay_method_ggp": {"ru": "криптой (TON)", "en": "crypto (TON)"},
+    "admin_purchase_notify": {
+        "ru": (
+            "🛒 <b>Новая покупка</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n"
+            "Сумма: <b>{amount} ₽</b>\n"
+            "Покупатель: {buyer}\n"
+            "Способ: {method}"
+        ),
+        "en": (
+            "🛒 <b>New purchase</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n"
+            "Amount: <b>{amount} ₽</b>\n"
+            "Buyer: {buyer}\n"
+            "Method: {method}"
+        ),
     },
     "admin_user_not_found": {
         "ru": "Пользователь не найден.",

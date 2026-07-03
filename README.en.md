@@ -38,9 +38,10 @@ bilingual — **Russian and English** — with on-the-fly switching.
 | ⭐ | **Sell Telegram Stars** | Buy stars for any @username (from 50 to 50,000) via the WATA Digital Goods API |
 | 💰 | **Configurable margin** | Markup over the minimum price via `MARKUP_PERCENT`, clamped to +50% |
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
-| 💎 | **Crypto (TON) payment** | A second rail: pay in TON via GreenGamePay with its **own** markup (`CRYPTO_MARKUP_PERCENT`). The bot scans the TON chain, matches the payment by its exact amount and delivers via `buyStars` |
+| 💎 | **Crypto (TON) payment** | A second rail: pay in TON via GreenGamePay with its **own** markup (`CRYPTO_MARKUP_PERCENT`). Delivery is gated on the GGP balance: once funds land, stars ship via `buyStars` |
+| 🪙 | **Crypto-only mode** | `CRYPTO_ONLY=true` — run without WATA at all (no card rail). For those who don't have a WATA merchant |
 | 💱 | **Two ⭐ rates** | The menu shows both rates: card (WATA) and crypto/GGP (cheaper) |
-| 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API; toncenter polling for crypto |
+| 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API; GGP balance check (`check_balance`) for crypto |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
 | 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
@@ -261,8 +262,18 @@ Done — the bot accepts orders and payments. 🚀
 
 ### (Optional) Crypto (TON) payment
 
-To add a second payment method — crypto via GreenGamePay — set these in `.env` and
-restart (`docker compose up -d`):
+**Where to register:** create an account with **GreenGamePay** —
+[пополнистим.рф](https://xn--h1aahgceagbyl.xn--p1ai/). After signing up, your
+dashboard gives you a login/password and a **TON deposit address** — put those in
+`.env`.
+
+How it works: the buyer pays TON to your GGP deposit address → your GGP balance grows
+→ the bot sees the funds (`check_balance`) and delivers stars via `buyStars`. Since
+the funds always reach you, delivery is gated **on the balance**, not on scanning the
+chain: the oldest unpaid crypto order ships first (FIFO).
+
+To add crypto as a second payment method, set these in `.env` and restart
+(`docker compose up -d`):
 
 ```dotenv
 CRYPTO_ENABLED=true
@@ -270,6 +281,19 @@ GGP_USERNAME=your-ggp-login
 GGP_PASSWORD=your-ggp-password
 GGP_TON_ADDRESS=ton-deposit-address        # from your GGP dashboard
 GGP_DEPOSIT_MEMO=your-ggp-login            # payment comment
+```
+
+**Crypto-only mode (no WATA).** If you don't have a WATA merchant and want to accept
+TON only — add `CRYPTO_ONLY=true`. The card rail is hidden everywhere and `WATA_TOKEN`
+can be left empty:
+
+```dotenv
+CRYPTO_ENABLED=true
+CRYPTO_ONLY=true
+WATA_TOKEN=
+GGP_USERNAME=your-ggp-login
+GGP_PASSWORD=your-ggp-password
+GGP_TON_ADDRESS=ton-deposit-address
 ```
 
 See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the crypto economics.
@@ -296,19 +320,19 @@ land in the repository.
 | Variable | Required | Description |
 |---|---|---|
 | `BOT_TOKEN` | yes | Bot token from [@BotFather](https://t.me/BotFather) |
-| `WATA_TOKEN` | yes | Merchant token from the WATA dashboard |
+| `WATA_TOKEN` | yes* | Merchant token from the WATA dashboard (*may be empty when `CRYPTO_ONLY=true`) |
 | `WATA_BASE_URL` | — | Digital Goods API base (default `https://dg-api.wata.pro/api`) |
 | `WATA_PUBLIC_KEY_URL` | — | URL of the WATA public key for webhook signature verification |
 | `MARKUP_PERCENT` | — | Markup over `minPrice` in % (card/WATA), result clamped to +50% (default `20`) |
 | `AUTO_CONFIRM` | — | `true` — auto-confirm star delivery after payment |
 | `CRYPTO_ENABLED` | — | `true` — enable the second rail: crypto (TON) via GreenGamePay |
+| `CRYPTO_ONLY` | — | `true` — crypto-only mode: the card (WATA) rail is hidden and `WATA_TOKEN` isn't needed (requires `CRYPTO_ENABLED=true`) |
 | `CRYPTO_MARKUP_PERCENT` | — | Markup for crypto payment in % (its own, usually lower; no +50% clamp) |
 | `GGP_USERNAME` / `GGP_PASSWORD` | for crypto | GreenGamePay credentials (via `.env` only) |
 | `GGP_BASE_URL` | — | GGP API base (default `пополнистим.рф` in IDNA form) |
-| `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (shared by all buyers) |
+| `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (from the GreenGamePay dashboard) |
 | `GGP_DEPOSIT_MEMO` | — | Payment comment = your GGP login (default `evansvl`) |
-| `TON_API_BASE` / `TON_API_KEY` | — | toncenter v3 chain scanner (key optional, raises limits) |
-| `TON_POLL_INTERVAL` | — | TON chain poll interval in seconds (default `20`) |
+| `TON_POLL_INTERVAL` | — | GGP balance check interval in seconds (default `20`) |
 | `CRYPTO_PAYMENT_TTL_MIN` | — | Validity of a quoted TON amount in minutes (default `30`) |
 | `ADMIN_IDS` | — | Comma-separated Telegram IDs of admins (for `/stats`) |
 | `DATABASE_URL` | — | PostgreSQL DSN (compose already points it at the `postgres` service) |
@@ -344,12 +368,13 @@ come back in the order-creation response and are stored in the DB as `margin`).
 
 **Crypto (TON via GGP)** is a separate rail with its own markup and no WATA clamp.
 GGP returns a wholesale `{ton, rub}` price per quantity; the buyer pays
-`ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up and nudged by
-±0.01 TON so each order has a **unique amount** (everyone pays one address with one
-comment — we tell payments apart by the amount). The bot polls toncenter, matches
-the payment and delivers via GGP `buyStars`. If a buyer paid but no stars arrived,
-the bot tells them to contact **@nnstorecontactbot**. See
-[docs/ECONOMICS.md](docs/ECONOMICS.md) for the math.
+`ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up. The buyer sends
+TON to your GGP deposit address and taps “✅ I paid”. Delivery is gated **on the GGP
+balance**, not on scanning the chain: the bot checks `check_balance`, and as soon as
+there are funds it delivers the oldest unpaid crypto order via GGP `buyStars` (FIFO).
+A background worker also completes orders if the buyer never taps the button. If a
+buyer paid but no stars arrived, the bot tells them to contact **@nnstorecontactbot**.
+See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the math.
 
 ---
 
