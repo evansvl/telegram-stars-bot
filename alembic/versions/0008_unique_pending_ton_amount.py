@@ -22,6 +22,25 @@ _INDEX = "uq_orders_pending_ton_amount"
 
 
 def upgrade() -> None:
+    # Safety net: if any PENDING crypto orders already share a TON amount, keep the
+    # oldest and expire the rest, so the unique index below can be created cleanly.
+    op.execute(
+        """
+        UPDATE orders SET status = 'Expired'
+        WHERE id IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY ton_amount ORDER BY created_at ASC, id ASC
+                ) AS rn
+                FROM orders
+                WHERE provider = 'ggp'
+                  AND status = 'Pending'
+                  AND ton_amount IS NOT NULL
+            ) dups
+            WHERE dups.rn > 1
+        )
+        """
+    )
     op.create_index(
         _INDEX,
         "orders",
