@@ -77,10 +77,9 @@ Crypto is a **second, parallel** payment method with its **own** markup
 - **No WATA +50% clamp here** — GGP has no such constraint, so the only ceiling on
   a partner's crypto markup is what you choose to allow.
 - WATA and GGP have independent wholesale prices, so a lower
-  `CRYPTO_MARKUP_PERCENT` does not by itself guarantee a cheaper final price. When
-  both rails are enabled, the bot compares their final RUB totals and suppresses
-  crypto if it is not strictly cheaper. This avoids advertising a higher rate as
-  “cheaper” without silently selling below GGP cost.
+  `CRYPTO_MARKUP_PERCENT` does not by itself guarantee a cheaper final price. The
+  bot always keeps both configured rails available and shows their rates without
+  claiming that crypto is necessarily cheaper.
 - Earnings use the **₽-equivalent** (`rub * markup`): the referral 5% and the
   partner share (minus `PARTNER_COMMISSION_PERCENT`) work exactly as on the card
   rail, so the wallet/withdrawal math is currency-consistent.

@@ -1,4 +1,4 @@
-"""Regression tests for the card-vs-crypto price invariant."""
+"""Regression tests for honest card-vs-crypto price display."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ class _EventStub:
 
 
 @pytest.mark.asyncio
-async def test_home_does_not_advertise_expensive_crypto_as_cheaper() -> None:
+async def test_home_shows_expensive_crypto_without_claiming_it_is_cheaper() -> None:
     event = _EventStub()
     settings = SimpleNamespace(is_admin=lambda _tg_id: False)
 
@@ -77,12 +77,12 @@ async def test_home_does_not_advertise_expensive_crypto_as_cheaper() -> None:
     )
 
     assert "1.59" in text
-    assert "1.78" not in text
+    assert "1.78" in text
     assert "cheaper" not in text
 
 
 @pytest.mark.asyncio
-async def test_quote_suppresses_expensive_crypto_and_clears_stale_fsm_values() -> None:
+async def test_quote_keeps_expensive_crypto_available_and_replaces_stale_fsm_values() -> None:
     event = _EventStub()
     state = _StateStub()
 
@@ -91,8 +91,8 @@ async def test_quote_suppresses_expensive_crypto_and_clears_stale_fsm_values() -
     )
 
     assert state.updated["card_amount"] == "79.50"
-    assert state.updated["crypto_ton_due"] is None
-    assert state.updated["crypto_rub_equiv"] is None
+    assert state.updated["crypto_ton_due"] == "0.77"
+    assert state.updated["crypto_rub_equiv"] == "89.00"
     assert len(event.answers) == 1
     assert "79.50" in event.answers[0][0]
-    assert "TON" not in event.answers[0][0]
+    assert "0.77 TON" in event.answers[0][0]

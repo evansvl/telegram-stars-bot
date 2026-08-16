@@ -10,7 +10,6 @@ from app.pricing import (
     MIN_STARS,
     compute_amount,
     compute_ton_due,
-    crypto_is_cheaper,
     crypto_rub_equiv,
     estimated_margin,
     is_valid_count,
@@ -99,9 +98,3 @@ def test_jitter_amounts_are_unique() -> None:
 
 def test_crypto_rub_equiv() -> None:
     assert crypto_rub_equiv(Decimal("55.07"), 10) == Decimal("60.58")
-
-
-def test_crypto_must_be_strictly_cheaper_than_card() -> None:
-    assert crypto_is_cheaper(Decimal("79.49"), Decimal("79.50"))
-    assert not crypto_is_cheaper(Decimal("79.50"), Decimal("79.50"))
-    assert not crypto_is_cheaper(Decimal("89.00"), Decimal("79.50"))

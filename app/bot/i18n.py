@@ -84,12 +84,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": (
             "💱 <b>Курс за 1 ⭐</b>\n"
             "💳 Картой ≈ <b>{card} ₽</b>\n"
-            "💎 Криптой ≈ <b>{crypto} ₽</b> (выгоднее)"
+            "💎 Криптой ≈ <b>{crypto} ₽</b>"
         ),
         "en": (
             "💱 <b>Rate per 1 ⭐</b>\n"
             "💳 Card ≈ <b>{card} ₽</b>\n"
-            "💎 Crypto ≈ <b>{crypto} ₽</b> (cheaper)"
+            "💎 Crypto ≈ <b>{crypto} ₽</b>"
         ),
     },
     "cancelled": {"ru": "Отменено.", "en": "Cancelled."},
