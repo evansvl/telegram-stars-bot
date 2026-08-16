@@ -102,3 +102,12 @@ def jitter_ton_amount(base: Decimal, taken: set[Decimal], *, step: Decimal) -> D
 def crypto_rub_equiv(rub_cost: Decimal, markup_percent: float) -> Decimal:
     """₽-equivalent the buyer effectively pays, stored for stats/referral math."""
     return apply_markup(rub_cost, markup_percent).quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
+def crypto_is_cheaper(crypto_rub: Decimal, card_rub: Decimal) -> bool:
+    """Whether a crypto quote is strictly cheaper than the comparable card quote.
+
+    The two providers have independent wholesale prices, so a lower configured
+    crypto markup does not by itself guarantee a lower buyer price.
+    """
+    return crypto_rub < card_rub

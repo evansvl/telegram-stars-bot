@@ -13,6 +13,7 @@ import logging
 import re
 from contextlib import suppress
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -35,7 +36,13 @@ from app.bot.states import (
 )
 from app.config import Settings
 from app.ggp.errors import GgpError
-from app.pricing import MAX_STARS, MIN_STARS, compute_amount, is_valid_count
+from app.pricing import (
+    MAX_STARS,
+    MIN_STARS,
+    compute_amount,
+    crypto_is_cheaper,
+    is_valid_count,
+)
 from app.services import OrderService, PartnerService, ReferralService, WithdrawalError
 from app.wata.errors import WataError
 
@@ -88,12 +95,16 @@ async def _home_view(
     # No card rate in crypto-only mode (no WATA).
     card_rate = await service.star_rate(service.markup_percent) if service.wata_enabled else None
     crypto_rate = await service.crypto_star_rate()
-    if card_rate is not None and crypto_rate is not None:
+    if (
+        card_rate is not None
+        and crypto_rate is not None
+        and crypto_is_cheaper(crypto_rate, card_rate)
+    ):
         text += "\n\n" + t("star_rate_both", lang, card=card_rate, crypto=crypto_rate)
-    elif crypto_rate is not None:
-        text += "\n\n" + t("star_rate_crypto", lang, rate=crypto_rate)
     elif card_rate is not None:
         text += "\n\n" + t("star_rate", lang, rate=card_rate)
+    elif crypto_rate is not None:
+        text += "\n\n" + t("star_rate_crypto", lang, rate=crypto_rate)
     is_owner = bool(user) and await partner.owner_of(bot_id) == user.id
     is_admin = bool(user) and settings.is_admin(user.id)
     return text, keyboards.main_menu(lang, owner_settings=is_owner, admin=is_admin)
@@ -272,7 +283,19 @@ async def _show_quote(
         await partner.partner_markup(bot_id) if partner_owner is not None else Decimal("0")
     )
 
-    fsm: dict[str, object] = {"count": count, "partner_owner": partner_owner}
+    # Explicitly clear both rails before rebuilding the quote. FSM updates merge
+    # with existing data, so leaving old values here would let a forged callback
+    # reuse a payment method that the new quote no longer offers.
+    fsm: dict[str, Any] = {
+        "count": count,
+        "partner_owner": partner_owner,
+        "card_amount": None,
+        "card_partner_earning": None,
+        "crypto_ton_due": None,
+        "crypto_rub_equiv": None,
+        "crypto_rub_cost": None,
+        "crypto_partner_earning": None,
+    }
 
     # ── Card (WATA) ──
     card_amount: Decimal | None = None
@@ -300,18 +323,30 @@ async def _show_quote(
         except GgpError:
             logger.warning("GGP quote failed")
         else:
-            crypto_partner_earning = (
-                partner.partner_share(cq.rub_cost * partner_markup / Decimal("100"))
-                if partner_owner is not None
-                else Decimal("0")
-            )
-            crypto_ton = cq.ton_due
-            fsm.update(
-                crypto_ton_due=str(cq.ton_due),
-                crypto_rub_equiv=str(cq.rub_equiv),
-                crypto_rub_cost=str(cq.rub_cost),
-                crypto_partner_earning=str(crypto_partner_earning),
-            )
+            # A lower crypto markup does not guarantee a lower final price because
+            # WATA and GGP have independent wholesale rates. Never advertise or
+            # offer crypto as the cheaper rail when its actual RUB equivalent is
+            # equal to or above the card quote.
+            if card_amount is not None and not crypto_is_cheaper(cq.rub_equiv, card_amount):
+                logger.warning(
+                    "crypto quote suppressed: crypto_rub=%s card_rub=%s count=%d",
+                    cq.rub_equiv,
+                    card_amount,
+                    count,
+                )
+            else:
+                crypto_partner_earning = (
+                    partner.partner_share(cq.rub_cost * partner_markup / Decimal("100"))
+                    if partner_owner is not None
+                    else Decimal("0")
+                )
+                crypto_ton = cq.ton_due
+                fsm.update(
+                    crypto_ton_due=str(cq.ton_due),
+                    crypto_rub_equiv=str(cq.rub_equiv),
+                    crypto_rub_cost=str(cq.rub_cost),
+                    crypto_partner_earning=str(crypto_partner_earning),
+                )
 
     if card_amount is None and crypto_ton is None:
         # Nothing to offer (e.g. no card rail and the GGP quote failed).

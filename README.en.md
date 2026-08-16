@@ -44,7 +44,7 @@ bilingual — **Russian and English** — with on-the-fly switching.
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
 | 💎 | **Crypto (TON) payment** | A second rail: pay in TON via GreenGamePay with its **own** markup (`CRYPTO_MARKUP_PERCENT`). Delivery is gated on the GGP balance: once funds land, stars ship via `buyStars` |
 | 🪙 | **Independent payment methods** | Card and crypto enable separately and work together or alone. No WATA? Leave `WATA_TOKEN` empty and run crypto-only |
-| 💱 | **Two ⭐ rates** | The menu shows both rates: card (WATA) and crypto/GGP (cheaper) |
+| 💱 | **Two ⭐ rates** | The menu shows both rates only when the final GGP rate is strictly below WATA; otherwise the expensive crypto rail is not offered |
 | 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API; GGP balance check (`check_balance`) for crypto |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
 | 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
