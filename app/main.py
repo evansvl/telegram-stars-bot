@@ -9,7 +9,6 @@ plus a /health endpoint.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from contextlib import suppress
 
@@ -23,13 +22,19 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import (
     SimpleRequestHandler,
-    TokenBasedRequestHandler,
     setup_application,
 )
 from aiohttp import web
 
 from app.bot.handlers import router
 from app.bot.middleware import LanguageMiddleware
+from app.bot.webhook import (
+    PARTNER_WEBHOOK_PATH,
+    PartnerRequestHandler,
+    partner_webhook_secret,
+    partner_webhook_url,
+    telegram_webhook_master_secret,
+)
 from app.config import Settings, get_settings
 from app.db.session import Database
 from app.ggp.client import GgpClient
@@ -45,9 +50,7 @@ logger = logging.getLogger(__name__)
 
 def _telegram_secret(settings: Settings) -> str:
     """A non-empty Telegram secret_token, derived from the bot token if unset."""
-    if settings.telegram_webhook_secret:
-        return settings.telegram_webhook_secret
-    return hashlib.sha256(settings.bot_token.encode()).hexdigest()
+    return telegram_webhook_master_secret(settings)
 
 
 # How often the background task tops up the displayed star-rate caches (the values
@@ -97,6 +100,10 @@ async def main() -> None:
         ggp = GgpClient(
             settings.ggp_base_url, settings.ggp_username, settings.ggp_password, session
         )
+    elif settings.ggp_configured:
+        logger.warning(
+            "GGP credentials found, but unsafe balance-only delivery is disabled"
+        )
     service = OrderService(settings, wata, db, ggp)
     referral = ReferralService(settings, db)
     partner = PartnerService(settings, db)
@@ -134,11 +141,14 @@ async def main() -> None:
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=tg_secret).register(
         app, path=settings.telegram_webhook_path
     )
-    # Partner bots (managed bots) share the same Dispatcher; the token is in the URL.
-    TokenBasedRequestHandler(
+    # Partner bots share the Dispatcher, but are resolved from active DB rows by
+    # their public bot ID. Their credentials never appear in the URL.
+    PartnerRequestHandler(
         dispatcher=dp,
+        partner=partner,
+        master_secret=tg_secret,
         bot_settings={"default": DefaultBotProperties(parse_mode=ParseMode.HTML)},
-    ).register(app, path="/partner/{bot_token}")
+    ).register(app, path=PARTNER_WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
     runner = web.AppRunner(app, access_log=None)
@@ -161,7 +171,8 @@ async def main() -> None:
         child = Bot(pb.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         try:
             await child.set_webhook(
-                url=f"{settings.public_base_url}/partner/{pb.token}",
+                url=partner_webhook_url(settings, pb.bot_id),
+                secret_token=partner_webhook_secret(tg_secret, pb.bot_id),
                 allowed_updates=["message", "callback_query"],
             )
             logger.info("partner bot webhook set bot_id=%s", pb.bot_id)

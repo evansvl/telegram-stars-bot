@@ -8,6 +8,7 @@ signature in the ``X-Signature`` header. The public key is fetched from
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 
@@ -34,7 +35,7 @@ class SignatureVerifier:
             async with self._session.get(self._url, timeout=timeout) as resp:
                 resp.raise_for_status()
                 raw = await resp.read()
-        except aiohttp.ClientError as exc:
+        except (TimeoutError, aiohttp.ClientError) as exc:
             logger.warning("failed to fetch WATA public key: %s", exc)
             return None
 
@@ -92,12 +93,12 @@ class SignatureVerifier:
         if key is None:
             return False
         try:
-            signature = base64.b64decode(signature_header)
-        except (ValueError, TypeError):
+            signature = base64.b64decode(signature_header, validate=True)
+        except (binascii.Error, ValueError, TypeError):
             logger.warning("X-Signature is not valid base64")
             return False
         try:
             key.verify(signature, body, padding.PKCS1v15(), hashes.SHA512())
-        except InvalidSignature:
+        except (InvalidSignature, ValueError):
             return False
         return True

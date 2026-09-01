@@ -6,11 +6,11 @@
 
 **A ready-made open-source bot and shop template for selling Telegram Stars with
 your own markup.** A user enters the recipient's `@username` and the number of
-stars, pays **by card, SBP or crypto (TON)**, and the stars are delivered
+stars, pays **by card or SBP**, and the stars are delivered
 automatically. In short — a ready-to-run script for auto-selling Telegram Stars
 that you deploy on your own server in ~30–40 minutes via the
 [step-by-step guide](#-step-by-step-install-for-beginners). Payments and delivery
-go through **WATA** (card/SBP) and **GreenGamePay** (TON). The interface is
+go through **WATA** (card/SBP). The legacy GreenGamePay balance-only path is disabled. The interface is
 bilingual — **Russian and English** — with on-the-fly switching.
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -42,10 +42,8 @@ bilingual — **Russian and English** — with on-the-fly switching.
 | ⭐ | **Sell Telegram Stars** | Buy stars for any @username (from 50 to 50,000) via the WATA Digital Goods API |
 | 💰 | **Configurable margin** | Markup over the minimum price via `MARKUP_PERCENT`, clamped to +50% |
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
-| 💎 | **Crypto (TON) payment** | A second rail: pay in TON via GreenGamePay with its **own** markup (`CRYPTO_MARKUP_PERCENT`). Delivery is gated on the GGP balance: once funds land, stars ship via `buyStars` |
-| 🪙 | **Independent payment methods** | Card and crypto enable separately and work together or alone. No WATA? Leave `WATA_TOKEN` empty and run crypto-only |
-| 💱 | **Two ⭐ rates** | The menu honestly shows both independent rates, card (WATA) and crypto (GGP), without promising that either one is always cheaper |
-| 🔔 | **Payment tracking** | WATA webhook with RSA signature verification + status reconciliation via API; GGP balance check (`check_balance`) for crypto |
+| 💎 | **GGP safely disabled** | Unverified shared-balance delivery cannot be enabled through configuration; transaction-level TON reconciliation is required |
+| 🔔 | **Payment tracking** | WATA webhook with mandatory RSA signature verification and API status reconciliation |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
 | 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
 | 📊 | **Admin stats** | `/stats` for `ADMIN_IDS`: turnover, order count and total margin |
@@ -202,8 +200,7 @@ it replies with your number.
 
 Save in `nano`: **Ctrl+O** → **Enter**, exit: **Ctrl+X**.
 
-> 💎 Crypto (TON) payment can be enabled later — see the “(Optional) Crypto (TON)
-> payment” block below.
+> 💎 The legacy GGP balance-only path is disabled — see the explanation below.
 
 ---
 
@@ -264,7 +261,12 @@ Done — the bot accepts orders and payments. 🚀
 
 ---
 
-### (Optional) Crypto (TON) payment
+### Disabled crypto (TON) payment
+
+> ⚠️ **Security limitation:** `check_balance` exposes the shared GGP balance but
+> does not bind a specific TON transaction to a specific order. FIFO protects
+> delivery order; it is not proof of payment. Do not enable GGP in production until
+> an incoming TON transaction is reconciled by amount, address, memo, and tx hash.
 
 **Where to register:** create an account with **GreenGamePay** —
 [пополнистим.рф](https://xn--h1aahgceagbyl.xn--p1ai/). After signing up, your
@@ -276,9 +278,9 @@ How it works: the buyer pays TON to your GGP deposit address → your GGP balanc
 the funds always reach you, delivery is gated **on the balance**, not on scanning the
 chain: the oldest unpaid crypto order ships first (FIFO).
 
-Crypto is an independent payment method: it turns on by itself as soon as the three
-fields `GGP_USERNAME`, `GGP_PASSWORD` and `GGP_TON_ADDRESS` are set. Put them in `.env`
-and restart (`docker compose up -d`):
+Because of the limitation above, crypto always remains disabled even when
+`GGP_USERNAME`, `GGP_PASSWORD`, and `GGP_TON_ADDRESS` are set. The legacy balance-only
+flow cannot be unlocked through configuration:
 
 ```dotenv
 GGP_USERNAME=your-ggp-login
@@ -286,9 +288,8 @@ GGP_PASSWORD=your-ggp-password
 GGP_TON_ADDRESS=ton-deposit-address        # from your GGP dashboard
 ```
 
-**Crypto only (no WATA).** Both rails are independent — just leave `WATA_TOKEN` empty
-and the card rail is hidden everywhere. At least one rail (card and/or crypto) must be
-configured.
+**Crypto only (no WATA).** This mode is intentionally unavailable. Implement
+transaction-level TON verification before enabling it.
 
 See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the crypto economics.
 
@@ -319,8 +320,8 @@ land in the repository.
 | `WATA_PUBLIC_KEY_URL` | — | URL of the WATA public key for webhook signature verification |
 | `MARKUP_PERCENT` | — | Markup over `minPrice` in % (card/WATA), result clamped to +50% (default `20`) |
 | `AUTO_CONFIRM` | — | `true` — auto-confirm star delivery after payment |
-| `CRYPTO_MARKUP_PERCENT` | — | Markup for crypto payment in % (its own, usually lower; no +50% clamp) |
-| `GGP_USERNAME` / `GGP_PASSWORD` | for crypto | GreenGamePay credentials (via `.env` only). Set together with the address → crypto on |
+| `CRYPTO_MARKUP_PERCENT` | — | Reserved markup for the disabled GGP path |
+| `GGP_USERNAME` / `GGP_PASSWORD` | — | Reserved GreenGamePay credentials; they do not enable balance-only delivery |
 | `GGP_BASE_URL` | — | GGP API base (default `пополнистим.рф` in IDNA form) |
 | `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (from the GreenGamePay dashboard). Required to enable crypto |
 | `GGP_DEPOSIT_MEMO` | — | Payment comment = your GGP login (default `evansvl`) |
@@ -334,7 +335,6 @@ land in the repository.
 | `WEBHOOK_PATH` | — | WATA webhook path (default `/wata/webhook`) |
 | `WEBHOOK_SECRET` | — | Extra secret: checked against the `X-Webhook-Secret` header, if set |
 | `TELEGRAM_WEBHOOK_PATH` | — | Telegram webhook path (default `/tg/webhook`) |
-| `TELEGRAM_WEBHOOK_SECRET` | — | Secret for the `X-Telegram-Bot-Api-Secret-Token` header; if empty, derived from `BOT_TOKEN` |
 | `LOG_LEVEL` | — | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 
 ### Where to get the tokens
@@ -358,15 +358,16 @@ minPrice × count  ≤  amount  ≤  minPrice × count × 1.5   (at most +50%)
 Your profit = `amount − price − commission` (the purchase price and WATA commission
 come back in the order-creation response and are stored in the DB as `margin`).
 
-**Crypto (TON via GGP)** is a separate rail with its own markup and no WATA clamp.
+**The disabled legacy path (TON via GGP)** had its own markup and no WATA clamp.
 GGP returns a wholesale `{ton, rub}` price per quantity; the buyer pays
 `ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up. The buyer sends
-TON to your GGP deposit address and taps “✅ I paid”. Delivery is gated **on the GGP
-balance**, not on scanning the chain: the bot checks `check_balance`, and as soon as
+TON to your GGP deposit address and taps “✅ I paid”. Delivery is gated **on the shared
+GGP balance**, not on scanning the chain: the bot checks `check_balance`, and as soon as
 there are funds it delivers the oldest unpaid crypto order via GGP `buyStars` (FIFO).
 A background worker also completes orders if the buyer never taps the button. If a
 buyer paid but no stars arrived, the bot tells them to contact **@nnstorecontactbot**.
-See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the math.
+This check does not prove who made the deposit; production use requires transaction-level
+TON reconciliation. See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the math.
 
 ---
 
@@ -376,7 +377,8 @@ Inside the container the webhook server listens over **plain HTTP** on
 `127.0.0.1:8080` (port from `WEBHOOK_PORT`) and serves **all** paths from a single
 application: the Telegram webhook (`TELEGRAM_WEBHOOK_PATH`, default `/tg/webhook`),
 the WATA webhook (`WEBHOOK_PATH`, default `/wata/webhook`), partner-bot webhooks
-(`/partner/{token}`) and `/health`. So it's
+(`/partner/{bot_id}`) and `/health`. Bot tokens never appear in URLs, and every partner
+webhook requires its own server-derived `X-Telegram-Bot-Api-Secret-Token`. So it's
 enough to proxy the whole domain to `127.0.0.1:8080` — separate `location` blocks per
 path aren't needed. You set up TLS termination and public exposure **yourself**,
 outside `docker-compose`. Two options below; in both **replace `bot.example.com` with
@@ -445,10 +447,9 @@ The bot runs in webhook mode: a single HTTP server receives updates from both se
 You **don't** need to register the webhook manually — on startup the bot calls
 `setWebhook` for `https://<WEBHOOK_HOST><TELEGRAM_WEBHOOK_PATH>` (default
 `https://bot.example.com/tg/webhook`) itself and deletes it on shutdown. Every update
-is checked against the `X-Telegram-Bot-Api-Secret-Token` secret: if
-`TELEGRAM_WEBHOOK_SECRET` is empty, the secret is derived deterministically from
-`BOT_TOKEN`. The main thing is a correct `WEBHOOK_HOST` and a domain reachable over
-HTTPS from the outside.
+is checked against `X-Telegram-Bot-Api-Secret-Token`, whose value is always derived
+deterministically from `BOT_TOKEN`. There is no manual secret setting. The main thing
+is a correct `WEBHOOK_HOST` and a domain reachable over HTTPS from the outside.
 
 ### WATA
 
@@ -458,11 +459,11 @@ In the WATA dashboard (terminal/notifications section) set the webhook URL:
 https://<your-domain><WEBHOOK_PATH>    e.g. https://bot.example.com/wata/webhook
 ```
 
-The bot verifies the `X-Signature` (RSA SHA-512) against the WATA public key, logs the
-full payload, and then **reconciles the order status via `GET /stars/order/{id}`** —
-i.e. the API response is treated as the source of truth, not the notification body.
-The GET to WATA is rate-limited (1 request / 30 s per object), so polling is used only
-as a fallback.
+The bot requires a valid `X-Signature` (RSA SHA-512) against the WATA public key and
+then **reconciles the order status via `GET /stars/order/{id}`**. The notification body
+is never accepted as proof of payment. If the signature, public key, or reconciliation
+request is unavailable, the order remains unchanged and a non-2xx response asks WATA
+to retry delivery.
 
 > 📜 Docker logs are human-readable (`docker compose logs -f bot`):
 > `2026-06-19 12:00:00 INFO     app.main: telegram webhook set url=...`.
@@ -507,22 +508,22 @@ bot in BotFather, get a WATA token, fill in `.env`, set up HTTPS — and your St
 is live. You set the markup yourself (`MARKUP_PERCENT`); stars are delivered automatically.
 
 **Is it a ready-to-run script/template or do I need to write code?**
-It's ready to run: payment acceptance (card/SBP/TON crypto), automatic star delivery, a
+It's ready to run: card/SBP payment acceptance, automatic star delivery, a
 referral program, partner bots and an admin panel are already included. You only need a
 server, a domain and tokens (BotFather + WATA). The code is open — tweak it if you want.
 
 **Can I sell stars for crypto (TON)?**
-Yes. Besides card/SBP via WATA, there's a second method — crypto (TON) via GreenGamePay
-with its own, lower markup (`CRYPTO_MARKUP_PERCENT`). See the “(Optional) Crypto (TON)
-payment” block in the install guide.
+No. The legacy GreenGamePay balance-only path is hard-disabled because a shared balance
+does not prove payment for a specific order. Transaction-level TON reconciliation is
+required before it can be enabled.
 
 **Payment went through, but the stars didn't arrive.**
 The bot notifies about payment automatically via the WATA webhook — there is no manual
 check button. If no notification arrives, make sure the WATA webhook points at
 `https://<domain><WEBHOOK_PATH>` and that this address is reachable from the outside
 (`docker compose logs -f bot` shows incoming notifications). WATA rate-limits
-`GET /stars/order` (1 request / 30s per order), so when that call is unavailable the bot
-takes the status straight from the webhook body.
+`GET /stars/order` (1 request / 30s per order); on a temporary failure the bot leaves
+the order unchanged and waits for the signed webhook to be delivered again.
 
 **Error `STR_1002` when entering the recipient.**
 WATA couldn't find such a Telegram account. Check the @username (no `@`, 5–32 chars).

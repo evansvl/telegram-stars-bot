@@ -27,9 +27,19 @@ def test_parse_create_order_result() -> None:
 
 
 def test_parse_order_status_fallback_id() -> None:
-    status = OrderStatus.from_api({"id": "xyz", "status": "Review", "amount": 175.2})
+    status = OrderStatus.from_api(
+        {
+            "id": "xyz",
+            "status": "Review",
+            "username": "recipient",
+            "count": 100,
+            "amount": 175.2,
+        }
+    )
     assert status.order_id == "xyz"
     assert status.status == "Review"
+    assert status.username == "recipient"
+    assert status.count == 100
     assert status.amount == Decimal("175.2")
 
 

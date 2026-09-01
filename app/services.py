@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -41,7 +42,7 @@ from app.pricing import (
     jitter_ton_amount,
 )
 from app.wata.client import WataClient
-from app.wata.models import StarPrice
+from app.wata.models import OrderStatus, StarPrice
 
 logger = logging.getLogger(__name__)
 
@@ -58,36 +59,79 @@ _WATA_TO_LOCAL = {
 
 def map_status(wata_status: str) -> str:
     enum_val = _WATA_TO_LOCAL.get(wata_status)
-    return enum_val.value if enum_val else (wata_status or OrderStatusEnum.PENDING.value)
+    if enum_val is None:
+        raise OrderVerificationError(f"unsupported WATA status: {wata_status!r}")
+    return enum_val.value
 
 
-# Webhook payment-notification status -> local status. Used as a fallback when the
-# authoritative GET /stars/order is unavailable (WATA limits it to 1 req / 30s).
-_WEBHOOK_TO_LOCAL = {
-    "New": OrderStatusEnum.PENDING.value,
-    "Created": OrderStatusEnum.PENDING.value,
-    "Pending": OrderStatusEnum.PENDING.value,
-    "Review": OrderStatusEnum.REVIEW.value,
-    "Paid": OrderStatusEnum.PAID.value,
-    "Success": OrderStatusEnum.SUCCESS.value,
-    "Declined": OrderStatusEnum.FAIL.value,
-    "Failed": OrderStatusEnum.FAIL.value,
-    "Error": OrderStatusEnum.FAIL.value,
-    "Expired": OrderStatusEnum.FAIL.value,
-    "Refunded": OrderStatusEnum.REFUNDED.value,
-    "Cancelled": OrderStatusEnum.REFUNDED.value,
-    "Canceled": OrderStatusEnum.REFUNDED.value,
+class OrderVerificationError(RuntimeError):
+    """Raised when provider data does not match the order stored by the bot."""
+
+
+_WATA_TRANSITIONS = {
+    OrderStatusEnum.NEW.value: {
+        OrderStatusEnum.PENDING.value,
+        OrderStatusEnum.REVIEW.value,
+        OrderStatusEnum.PAID.value,
+        OrderStatusEnum.SUCCESS.value,
+        OrderStatusEnum.REFUNDED.value,
+        OrderStatusEnum.FAIL.value,
+    },
+    OrderStatusEnum.PENDING.value: {
+        OrderStatusEnum.PENDING.value,
+        OrderStatusEnum.REVIEW.value,
+        OrderStatusEnum.PAID.value,
+        OrderStatusEnum.SUCCESS.value,
+        OrderStatusEnum.REFUNDED.value,
+        OrderStatusEnum.FAIL.value,
+    },
+    OrderStatusEnum.REVIEW.value: {
+        OrderStatusEnum.REVIEW.value,
+        OrderStatusEnum.PAID.value,
+        OrderStatusEnum.SUCCESS.value,
+        OrderStatusEnum.REFUNDED.value,
+        OrderStatusEnum.FAIL.value,
+    },
+    OrderStatusEnum.PAID.value: {
+        OrderStatusEnum.PAID.value,
+        OrderStatusEnum.SUCCESS.value,
+        OrderStatusEnum.REFUNDED.value,
+        OrderStatusEnum.FAIL.value,
+    },
+    OrderStatusEnum.SUCCESS.value: {OrderStatusEnum.SUCCESS.value},
+    OrderStatusEnum.REFUNDED.value: {OrderStatusEnum.REFUNDED.value},
+    OrderStatusEnum.FAIL.value: {OrderStatusEnum.FAIL.value},
+    OrderStatusEnum.ERROR.value: {
+        OrderStatusEnum.PENDING.value,
+        OrderStatusEnum.REVIEW.value,
+        OrderStatusEnum.PAID.value,
+        OrderStatusEnum.SUCCESS.value,
+        OrderStatusEnum.REFUNDED.value,
+        OrderStatusEnum.FAIL.value,
+    },
 }
 
 
-def webhook_status(payload: dict[str, Any] | None) -> str | None:
-    """Map a webhook payload's status field to a local status, if recognizable."""
-    if not payload:
-        return None
-    raw = payload.get("transactionStatus") or payload.get("status")
-    if not isinstance(raw, str):
-        return None
-    return _WEBHOOK_TO_LOCAL.get(raw)
+def _wata_transition_allowed(current: str, new: str) -> bool:
+    return new in _WATA_TRANSITIONS.get(current, set())
+
+
+def _normalise_username(value: str) -> str:
+    return value.strip().lstrip("@").casefold()
+
+
+def _verify_wata_order(local: Order, remote: OrderStatus) -> None:
+    """Bind an authenticated WATA response to the immutable local order facts."""
+    if remote.order_id != local.order_id:
+        raise OrderVerificationError(
+            f"WATA order id mismatch: expected {local.order_id!r}, got {remote.order_id!r}"
+        )
+    if _normalise_username(remote.username) != _normalise_username(local.target_username):
+        raise OrderVerificationError(f"WATA username mismatch for order {local.order_id}")
+    if remote.count != local.count:
+        raise OrderVerificationError(f"WATA count mismatch for order {local.order_id}")
+    if remote.amount != local.amount:
+        raise OrderVerificationError(f"WATA amount mismatch for order {local.order_id}")
 
 
 @dataclass(slots=True)
@@ -148,6 +192,11 @@ _INSUFFICIENT_HINTS = (
     "not enough",
     "no funds",
 )
+
+# GGP calls time out well below this.  A claim older than the threshold is
+# ambiguous (the provider may have delivered before our process died), so it is
+# quarantined as ERROR rather than retried and potentially charged twice.
+_STALE_GGP_CLAIM_MINUTES = 10
 
 
 def _looks_insufficient(exc: Exception) -> bool:
@@ -383,6 +432,7 @@ class OrderService:
                 count=count,
                 amount=amount,
                 status=OrderStatusEnum.NEW.value,
+                provider="test" if self._settings.test_mode else "wata",
                 partner_owner_tg_id=partner_owner_tg_id,
                 partner_earning=partner_earning,
                 bot_id=bot_id,
@@ -567,12 +617,21 @@ class OrderService:
                 self._settings.crypto_payment_ttl_min
             )
 
+    async def fail_stale_crypto_claims(self) -> int:
+        """Quarantine abandoned in-flight GGP deliveries for manual reconciliation."""
+        async with self._db.session() as session:
+            return await OrderRepository(session).fail_stale_crypto_claims(
+                _STALE_GGP_CLAIM_MINUTES
+            )
+
     async def oldest_pending_crypto(self) -> Order | None:
         """The oldest still-unpaid crypto order (FIFO delivery target)."""
         async with self._db.session() as session:
             return await OrderRepository(session).oldest_pending_crypto()
 
-    async def try_deliver_crypto(self, order_id: str) -> tuple[Order | None, str]:
+    async def try_deliver_crypto(
+        self, order_id: str, *, buyer_tg_id: int | None = None
+    ) -> tuple[Order | None, str]:
         """Deliver a crypto order if the GGP balance covers it.
 
         The operator always receives the TON, so we don't scan the chain: we check
@@ -581,10 +640,15 @@ class OrderService:
         (permanent) / ``not_funded`` (retryable) / ``gone``.
         """
         assert self._ggp is not None, "crypto rail not configured"
-        balance = await self._ggp.check_balance()  # raises GgpError on network issues
-        if balance <= 0:
-            return None, "not_funded"
-        order = await self.deliver_ggp_order(order_id)
+        if buyer_tg_id is not None:
+            oldest = await self.oldest_pending_crypto()
+            if (
+                oldest is None
+                or oldest.order_id != order_id
+                or oldest.buyer_tg_id != buyer_tg_id
+            ):
+                return None, "gone"
+        order = await self.deliver_ggp_order(order_id, buyer_tg_id=buyer_tg_id)
         if order is None:
             return None, "gone"
         if order.status == OrderStatusEnum.SUCCESS.value:
@@ -593,7 +657,9 @@ class OrderService:
             return order, "failed"
         return order, "not_funded"  # reverted to PENDING (funds not enough yet)
 
-    async def deliver_ggp_order(self, order_id: str) -> Order | None:
+    async def deliver_ggp_order(
+        self, order_id: str, *, buyer_tg_id: int | None = None
+    ) -> Order | None:
         """Claim a paid crypto order and deliver via GGP buyStars.
 
         Idempotent: claims PENDING -> PAID first so a concurrent poll tick / button
@@ -606,14 +672,46 @@ class OrderService:
         assert self._ggp is not None, "crypto rail not configured"
         async with self._db.session() as session:
             repo = OrderRepository(session)
-            order = await repo.get_by_order_id(order_id)
-            if order is None or order.status != OrderStatusEnum.PENDING.value:
+            order = await repo.claim_pending_crypto(order_id, buyer_tg_id=buyer_tg_id)
+            if order is None:
                 return None
-            await repo.update_status(order_id, status=OrderStatusEnum.PAID.value)
             target, count = order.target_username, order.count
+
+        # Check the shared provider balance only after the global FIFO claim.  This
+        # prevents two different pending orders from concurrently consuming the
+        # same newly-arrived balance.
+        try:
+            balance = await self._ggp.check_balance()
+        except asyncio.CancelledError:
+            # Balance lookup has no side effect, so this claim is safe to release.
+            async with self._db.session() as session:
+                await OrderRepository(session).finish_crypto_claim(
+                    order_id, status=OrderStatusEnum.PENDING.value
+                )
+            raise
+        except Exception:
+            async with self._db.session() as session:
+                await OrderRepository(session).finish_crypto_claim(
+                    order_id, status=OrderStatusEnum.PENDING.value
+                )
+            raise
+        if balance <= 0:
+            async with self._db.session() as session:
+                return await OrderRepository(session).finish_crypto_claim(
+                    order_id, status=OrderStatusEnum.PENDING.value
+                )
 
         try:
             result = await self._ggp.buy_stars(target, count)
+        except asyncio.CancelledError:
+            # Cancellation during a non-idempotent request is ambiguous: the
+            # provider may already have delivered. Keep PAID; the stale-claim
+            # quarantine will turn it into ERROR for manual reconciliation.
+            logger.critical(
+                "buyStars interrupted; leaving claim for reconciliation order_id=%s",
+                order_id,
+            )
+            raise
         except Exception as exc:
             retryable = _looks_insufficient(exc)
             new_status = (
@@ -623,53 +721,89 @@ class OrderService:
                 "buyStars failed order_id=%s retryable=%s: %s", order_id, retryable, exc
             )
             async with self._db.session() as session:
-                return await OrderRepository(session).update_status(order_id, status=new_status)
+                return await OrderRepository(session).finish_crypto_claim(
+                    order_id, status=new_status
+                )
 
         async with self._db.session() as session:
-            updated = await OrderRepository(session).update_status(
+            updated = await OrderRepository(session).finish_crypto_claim(
                 order_id, status=OrderStatusEnum.SUCCESS.value, ggp_tx_id=result.tx_id
             )
+        if updated is None:
+            logger.error("lost GGP delivery claim after buyStars order_id=%s", order_id)
+            return None
         logger.info("crypto order delivered order_id=%s tx=%s", order_id, result.tx_id)
         return updated
 
     async def sync_order(
         self, order_id: str, raw_webhook: dict[str, Any] | None = None
     ) -> Order | None:
-        """Fetch authoritative status from WATA, auto-confirm if configured, persist.
+        """Fetch and persist authoritative WATA state for a matching WATA order.
 
-        WATA rate-limits GET /stars/order to 1 request / 30s per object, so when the
-        fetch fails we fall back to the status carried in the webhook payload — that
-        is what lets the buyer be notified of payment without a successful re-fetch.
-        Returns the updated Order (or None if unknown).
+        Provider errors deliberately propagate to the webhook handler so it can return
+        a retryable HTTP error.  The notification body is never a status fallback.
         """
-        try:
-            status = await self._wata.get_order(order_id)
-        except Exception:
+        local = await self._get_local(order_id)
+        if local is None:
+            return None
+        if local.provider != "wata":
             logger.warning(
-                "order GET unavailable; falling back to webhook status order_id=%s", order_id
+                "ignored WATA webhook for non-WATA order order_id=%s provider=%s",
+                order_id,
+                local.provider,
             )
-            return await self._apply_webhook_status(order_id, raw_webhook)
+            return None
+
+        status = await self._wata.get_order(order_id)
+        _verify_wata_order(local, status)
 
         wata_status = status.status
+        mapped_status = map_status(wata_status)
 
         # Auto-confirm: Review -> Paid (release the stars).
         if wata_status == "Review" and self._settings.auto_confirm:
             try:
                 confirmed = await self._wata.confirm_order(order_id)
-                wata_status = confirmed.status or "Paid"
+                if confirmed.order_id != order_id:
+                    raise OrderVerificationError(
+                        f"WATA confirm id mismatch for order {order_id}"
+                    )
+                # WATA documents the successful POST as Review -> Paid but does not
+                # guarantee a response payload.  A successful empty response is
+                # therefore authoritative Paid; a returned status is still parsed
+                # and validated normally.
+                wata_status = confirmed.status or OrderStatusEnum.PAID.value
+                mapped_status = map_status(wata_status)
                 logger.info("order auto-confirmed order_id=%s status=%s", order_id, wata_status)
             except Exception:
                 logger.exception("auto-confirm failed order_id=%s", order_id)
+                raise
 
-        margin = (
-            estimated_margin(status.amount, status.price, status.commission)
-            if status.amount
-            else None
-        )
+        # The documented status response always includes ``amount`` but may omit
+        # acquisition price/commission. Preserve the values captured at creation
+        # instead of accidentally turning the whole payment into apparent margin.
+        effective_price = status.price or local.price or Decimal("0")
+        effective_commission = status.commission or local.commission or Decimal("0")
+        margin = estimated_margin(status.amount, effective_price, effective_commission)
         async with self._db.session() as session:
-            updated = await OrderRepository(session).update_status(
+            repo = OrderRepository(session)
+            # Serialize updates for this order. Without the row lock, two valid
+            # webhook retries could both read Pending and commit out of order,
+            # allowing a stale Review response to overwrite Success.
+            current = await repo.get_by_order_id_for_update(order_id)
+            if current is None or current.provider != "wata":
+                return None
+            if not _wata_transition_allowed(current.status, mapped_status):
+                logger.warning(
+                    "ignored invalid WATA transition order_id=%s current=%s remote=%s",
+                    order_id,
+                    current.status,
+                    mapped_status,
+                )
+                return None
+            updated = await repo.update_status(
                 order_id,
-                status=map_status(wata_status),
+                status=mapped_status,
                 price=status.price or None,
                 commission=status.commission or None,
                 margin=margin,
@@ -677,24 +811,22 @@ class OrderService:
             )
         return updated
 
-    async def _apply_webhook_status(
-        self, order_id: str, raw_webhook: dict[str, Any] | None
-    ) -> Order | None:
-        """Update an order from the webhook payload when WATA's GET is unavailable."""
-        mapped = webhook_status(raw_webhook)
-        if mapped is None:
-            return await self._get_local(order_id)
+    async def simulate_payment(self, order_id: str, buyer_tg_id: int) -> Order | None:
+        """Complete the caller's own pending test order; disabled outside test mode."""
+        if not self._settings.test_mode:
+            logger.warning("rejected simulated payment outside test mode order_id=%s", order_id)
+            return None
         async with self._db.session() as session:
-            return await OrderRepository(session).update_status(
-                order_id, status=mapped, raw_webhook=raw_webhook
-            )
-
-    async def simulate_payment(self, order_id: str) -> Order | None:
-        """Mark a test order as paid+delivered locally (test mode only)."""
-        async with self._db.session() as session:
-            return await OrderRepository(session).update_status(
-                order_id, status=OrderStatusEnum.SUCCESS.value
-            )
+            repo = OrderRepository(session)
+            order = await repo.get_by_order_id(order_id)
+            if (
+                order is None
+                or order.provider != "test"
+                or order.buyer_tg_id != buyer_tg_id
+                or order.status != OrderStatusEnum.PENDING.value
+            ):
+                return None
+            return await repo.update_status(order_id, status=OrderStatusEnum.SUCCESS.value)
 
     async def list_orders(self, buyer_tg_id: int, limit: int = 20) -> list[Order]:
         async with self._db.session() as session:
@@ -729,9 +861,6 @@ class OrderService:
 
 
 # ── Referral program ─────────────────────────────────────────────
-
-_CREDIT_STATUSES = {OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value}
-
 
 class WithdrawalError(Exception):
     """Raised when a withdrawal request fails validation; ``key`` is an i18n key."""
@@ -777,7 +906,22 @@ class ReferralService:
         Partner-bot orders pay the partner their pre-computed markup; otherwise the
         buyer's referrer earns 5%. Returns (earner_tg_id, amount) on a new credit.
         """
-        if order.status not in _CREDIT_STATUSES:
+        if order.provider == "wata":
+            if order.status not in {
+                OrderStatusEnum.PAID.value,
+                OrderStatusEnum.SUCCESS.value,
+            }:
+                return None
+        elif order.provider == "ggp":
+            if order.status != OrderStatusEnum.SUCCESS.value or not order.ggp_tx_id:
+                logger.warning(
+                    "refusing to credit unverified GGP order order_id=%s", order.order_id
+                )
+                return None
+        elif order.provider == "test":
+            if order.status != OrderStatusEnum.SUCCESS.value:
+                return None
+        else:
             return None
         # Partner-bot order: the partner keeps their markup (the 5% referral does
         # not apply here).

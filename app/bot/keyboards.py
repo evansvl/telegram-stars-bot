@@ -202,10 +202,13 @@ def cancel_button(lang: str, data: str = "buy:cancel") -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def admin_withdrawal_actions(withdrawal_id: int, lang: str) -> InlineKeyboardMarkup:
+def admin_withdrawal_actions(
+    withdrawal_id: int, lang: str, *, origin_bot_id: int | None = None
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text=t("btn_approve", lang), callback_data=f"wda:approve:{withdrawal_id}")
-    builder.button(text=t("btn_reject", lang), callback_data=f"wda:reject:{withdrawal_id}")
+    suffix = f"{withdrawal_id}:{origin_bot_id}" if origin_bot_id else str(withdrawal_id)
+    builder.button(text=t("btn_approve", lang), callback_data=f"wda:approve:{suffix}")
+    builder.button(text=t("btn_reject", lang), callback_data=f"wda:reject:{suffix}")
     builder.adjust(2)
     return builder.as_markup()
 

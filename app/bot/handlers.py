@@ -34,7 +34,13 @@ from app.bot.states import (
     PartnerStates,
     WithdrawStates,
 )
+from app.bot.webhook import (
+    partner_webhook_secret,
+    partner_webhook_url,
+    telegram_webhook_master_secret,
+)
 from app.config import Settings
+from app.db.models import Withdrawal
 from app.ggp.errors import GgpError
 from app.pricing import MAX_STARS, MIN_STARS, compute_amount, is_valid_count
 from app.services import OrderService, PartnerService, ReferralService, WithdrawalError
@@ -81,7 +87,8 @@ async def _home_view(
     partner: PartnerService,
     settings: Settings,
     lang: str,
-) -> tuple[str, object]:
+    main_bot: Bot | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Build the main-menu text (with the 1⭐ rate) and the context-aware keyboard."""
     user = event.from_user
     bot_id = event.bot.id if event.bot else 0
@@ -95,8 +102,14 @@ async def _home_view(
         text += "\n\n" + t("star_rate_crypto", lang, rate=crypto_rate)
     elif card_rate is not None:
         text += "\n\n" + t("star_rate", lang, rate=card_rate)
-    is_owner = bool(user) and await partner.owner_of(bot_id) == user.id
-    is_admin = bool(user) and settings.is_admin(user.id)
+    is_owner = user is not None and await partner.owner_of(bot_id) == user.id
+    is_admin = bool(
+        user is not None
+        and main_bot is not None
+        and event.bot is not None
+        and event.bot.id == main_bot.id
+        and settings.is_admin(user.id)
+    )
     return text, keyboards.main_menu(lang, owner_settings=is_owner, admin=is_admin)
 
 
@@ -109,6 +122,7 @@ async def cmd_start(
     referral: ReferralService,
     partner: PartnerService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
     await state.clear()
@@ -120,7 +134,7 @@ async def cmd_start(
             referrer_id = 0
         if referrer_id:
             await referral.register_referral(message.from_user.id, referrer_id)
-    text, kb = await _home_view(message, service, partner, settings, lang)
+    text, kb = await _home_view(message, service, partner, settings, lang, main_bot)
     await message.answer(text, reply_markup=kb)
 
 
@@ -137,10 +151,11 @@ async def cb_menu(
     service: OrderService,
     partner: PartnerService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
     await state.clear()
-    text, kb = await _home_view(call, service, partner, settings, lang)
+    text, kb = await _home_view(call, service, partner, settings, lang, main_bot)
     await _render(call, text, kb)
     await call.answer()
 
@@ -152,10 +167,11 @@ async def cb_cancel(
     service: OrderService,
     partner: PartnerService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
     await state.clear()
-    text, kb = await _home_view(call, service, partner, settings, lang)
+    text, kb = await _home_view(call, service, partner, settings, lang, main_bot)
     await _render(call, text, kb)
     await call.answer()
 
@@ -579,13 +595,18 @@ async def cb_crypto_paid(
     lang: str,
 ) -> None:
     """Buyer says they paid: check the GGP balance and deliver if funded."""
+    if not call.from_user:
+        await call.answer()
+        return
     order_id = (call.data or "").split(":")[-1]
     if not service.crypto_enabled:
         await call.answer(t("crypto_unavailable", lang), show_alert=True)
         return
     await call.answer(t("crypto_checking", lang))
     try:
-        delivered, outcome = await service.try_deliver_crypto(order_id)
+        delivered, outcome = await service.try_deliver_crypto(
+            order_id, buyer_tg_id=call.from_user.id
+        )
     except GgpError:
         await call.answer(t("crypto_err_network", lang), show_alert=True)
         return
@@ -619,6 +640,7 @@ async def cb_crypto_cancel(
     service: OrderService,
     partner: PartnerService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
     """Buyer cancels their pending crypto order, freeing the slot for a new one."""
@@ -628,17 +650,25 @@ async def cb_crypto_cancel(
     order_id = (call.data or "").split(":")[-1]
     cancelled = await service.cancel_crypto_order(order_id, call.from_user.id)
     await call.answer(t("crypto_cancelled" if cancelled else "crypto_cancel_gone", lang))
-    text, markup = await _home_view(call, service, partner, settings, lang)
+    text, markup = await _home_view(call, service, partner, settings, lang, main_bot)
     await _render(call, text, markup)
 
 
 @router.callback_query(F.data.startswith("testpay:"))
 async def cb_testpay(
-    call: CallbackQuery, service: OrderService, referral: ReferralService, lang: str
+    call: CallbackQuery,
+    service: OrderService,
+    referral: ReferralService,
+    settings: Settings,
+    lang: str,
 ) -> None:
     """Simulate a successful payment (test mode) and run the payout flow."""
+    if not settings.test_mode or not call.from_user:
+        logger.warning("rejected testpay callback while test mode is disabled")
+        await call.answer()
+        return
     order_id = (call.data or "").split(":", 1)[1]
-    order = await service.simulate_payment(order_id)
+    order = await service.simulate_payment(order_id, call.from_user.id)
     await call.answer()
     if order is None:
         return
@@ -689,13 +719,16 @@ async def cb_referral(call: CallbackQuery, referral: ReferralService, lang: str)
 # ── Partner bots (managed bots) ──────────────────────────────
 
 
-async def _register_partner_webhook(token: str, settings: Settings) -> None:
+async def _register_partner_webhook(token: str, bot_id: int, settings: Settings) -> None:
     """Point a freshly created managed bot's webhook at our multibot endpoint."""
     child = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
-        url = f"{settings.public_base_url}/partner/{token}"
+        master_secret = telegram_webhook_master_secret(settings)
         await child.set_webhook(
-            url=url, allowed_updates=["message", "callback_query"], drop_pending_updates=True
+            url=partner_webhook_url(settings, bot_id),
+            secret_token=partner_webhook_secret(master_secret, bot_id),
+            allowed_updates=["message", "callback_query"],
+            drop_pending_updates=True,
         )
     finally:
         await child.session.close()
@@ -766,7 +799,7 @@ async def cb_partner_toggle(
         return
     try:
         if bot.active:
-            await _register_partner_webhook(bot.token, settings)
+            await _register_partner_webhook(bot.token, bot.bot_id, settings)
         else:
             await _delete_partner_webhook(bot.token)
     except Exception:
@@ -824,7 +857,7 @@ async def on_managed_bot_created(
         token=token,
     )
     try:
-        await _register_partner_webhook(token, settings)
+        await _register_partner_webhook(token, bot_user.id, settings)
     except Exception:
         logger.exception("failed to register partner webhook for %s", bot_user.id)
     await message.answer(
@@ -971,6 +1004,7 @@ async def on_withdraw_amount(
     referral: ReferralService,
     service: OrderService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
     raw = (message.text or "").strip().replace(",", ".").replace(" ", "")
@@ -999,7 +1033,7 @@ async def on_withdraw_amount(
         t("withdraw_created", lang, amount=wd.amount, id=wd.id),
         reply_markup=keyboards.main_menu(lang),
     )
-    await _notify_admins_new_withdrawal(message, service, settings, wd)
+    await _notify_admins_new_withdrawal(message, main_bot, service, settings, wd)
 
 
 @router.callback_query(F.data == "wd:cancel")
@@ -1039,14 +1073,19 @@ async def cb_withdrawals(call: CallbackQuery, referral: ReferralService, lang: s
 
 
 async def _notify_admins_new_withdrawal(
-    message: Message, service: OrderService, settings: Settings, wd
+    message: Message,
+    main_bot: Bot,
+    service: OrderService,
+    settings: Settings,
+    wd: Withdrawal,
 ) -> None:
     user = message.from_user
     user_label = f"@{user.username}" if user and user.username else str(wd.user_tg_id)
+    origin_bot_id = message.bot.id if message.bot else main_bot.id
     for admin_id in settings.admin_ids:
         alang = await service.get_user_language(admin_id)
         try:
-            await message.bot.send_message(
+            await main_bot.send_message(
                 admin_id,
                 t(
                     "admin_new_withdrawal",
@@ -1057,22 +1096,61 @@ async def _notify_admins_new_withdrawal(
                     method=t(f"method_{wd.method}", alang),
                     destination=wd.destination,
                 ),
-                reply_markup=keyboards.admin_withdrawal_actions(wd.id, alang),
+                reply_markup=keyboards.admin_withdrawal_actions(
+                    wd.id, alang, origin_bot_id=origin_bot_id
+                ),
             )
         except Exception:
             logger.exception("failed to notify admin %s of withdrawal %s", admin_id, wd.id)
 
 
+def _parse_withdrawal_callback(data: str | None) -> tuple[int, int | None] | None:
+    """Parse current ``wda:action:id:origin_bot`` and legacy three-part callbacks."""
+    parts = (data or "").split(":")
+    if len(parts) not in {3, 4} or not parts[2].isdecimal():
+        return None
+    if len(parts) == 4 and not parts[3].isdecimal():
+        return None
+    return int(parts[2]), int(parts[3]) if len(parts) == 4 else None
+
+
+async def _withdrawal_notification_bot(
+    origin_bot_id: int | None, main_bot: Bot, partner: PartnerService
+) -> tuple[Bot, bool]:
+    """Resolve the bot the user actually contacted; return ``(bot, must_close)``."""
+    if not origin_bot_id or origin_bot_id == main_bot.id:
+        return main_bot, False
+    partner_bot = await partner.get_bot(origin_bot_id)
+    if partner_bot is None or not partner_bot.active:
+        return main_bot, False
+    return (
+        Bot(
+            partner_bot.token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        ),
+        True,
+    )
+
+
 @router.callback_query(F.data.startswith("wda:approve:"))
 async def cb_admin_approve(
-    call: CallbackQuery, state: FSMContext, settings: Settings, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
 ) -> None:
-    if not (call.from_user and settings.is_admin(call.from_user.id)):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
-    wid = int((call.data or "").split(":")[-1])
+    parsed = _parse_withdrawal_callback(call.data)
+    if parsed is None:
+        logger.warning("rejected malformed withdrawal callback data=%r", call.data)
+        await call.answer()
+        return
+    wid, origin_bot_id = parsed
     await state.set_state(AdminWithdrawStates.waiting_proof)
-    await state.update_data(withdrawal_id=wid)
+    await state.update_data(withdrawal_id=wid, withdrawal_bot_id=origin_bot_id)
     if isinstance(call.message, Message):
         await call.message.answer(t("admin_ask_proof", lang, id=wid))
     await call.answer()
@@ -1080,14 +1158,23 @@ async def cb_admin_approve(
 
 @router.callback_query(F.data.startswith("wda:reject:"))
 async def cb_admin_reject(
-    call: CallbackQuery, state: FSMContext, settings: Settings, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
 ) -> None:
-    if not (call.from_user and settings.is_admin(call.from_user.id)):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
-    wid = int((call.data or "").split(":")[-1])
+    parsed = _parse_withdrawal_callback(call.data)
+    if parsed is None:
+        logger.warning("rejected malformed withdrawal callback data=%r", call.data)
+        await call.answer()
+        return
+    wid, origin_bot_id = parsed
     await state.set_state(AdminWithdrawStates.waiting_reject_reason)
-    await state.update_data(withdrawal_id=wid)
+    await state.update_data(withdrawal_id=wid, withdrawal_bot_id=origin_bot_id)
     if isinstance(call.message, Message):
         await call.message.answer(t("admin_ask_reject_reason", lang, id=wid))
     await call.answer()
@@ -1099,8 +1186,14 @@ async def on_admin_proof(
     state: FSMContext,
     referral: ReferralService,
     service: OrderService,
+    partner: PartnerService,
+    settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
+    if not _is_admin_message(message, settings, main_bot):
+        await state.clear()
+        return
     text = (message.text or "").strip()
     proof_type: str | None = None
     proof_value: str | None = None
@@ -1116,6 +1209,7 @@ async def on_admin_proof(
         return
     data = await state.get_data()
     wid = int(data.get("withdrawal_id", 0))
+    origin_bot_id = data.get("withdrawal_bot_id")
     admin_id = message.from_user.id if message.from_user else 0
     wd = await referral.approve_withdrawal(
         wid, admin_id=admin_id, proof_type=proof_type, proof_value=proof_value
@@ -1127,13 +1221,19 @@ async def on_admin_proof(
     await message.answer(t("admin_withdrawal_done", lang, id=wd.id))
     ulang = await service.get_user_language(wd.user_tg_id)
     caption = t("withdraw_approved_notify", ulang, id=wd.id, amount=wd.amount)
+    notify_bot, close_notify_bot = await _withdrawal_notification_bot(
+        int(origin_bot_id) if origin_bot_id else None, main_bot, partner
+    )
     try:
         if proof_type == "pdf":
-            await message.bot.send_document(wd.user_tg_id, proof_value, caption=caption)
+            await notify_bot.send_document(wd.user_tg_id, proof_value, caption=caption)
         else:
-            await message.bot.send_message(wd.user_tg_id, f"{caption}\n{proof_value}")
+            await notify_bot.send_message(wd.user_tg_id, f"{caption}\n{proof_value}")
     except Exception:
         logger.exception("failed to notify user %s of approval", wd.user_tg_id)
+    finally:
+        if close_notify_bot:
+            await notify_bot.session.close()
 
 
 @router.message(AdminWithdrawStates.waiting_reject_reason, F.text)
@@ -1142,11 +1242,18 @@ async def on_admin_reject_reason(
     state: FSMContext,
     referral: ReferralService,
     service: OrderService,
+    partner: PartnerService,
+    settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
+    if not _is_admin_message(message, settings, main_bot):
+        await state.clear()
+        return
     reason = (message.text or "").strip()
     data = await state.get_data()
     wid = int(data.get("withdrawal_id", 0))
+    origin_bot_id = data.get("withdrawal_bot_id")
     admin_id = message.from_user.id if message.from_user else 0
     wd = await referral.reject_withdrawal(wid, admin_id=admin_id, reason=reason)
     await state.clear()
@@ -1155,12 +1262,18 @@ async def on_admin_reject_reason(
         return
     await message.answer(t("admin_withdrawal_done", lang, id=wd.id))
     ulang = await service.get_user_language(wd.user_tg_id)
+    notify_bot, close_notify_bot = await _withdrawal_notification_bot(
+        int(origin_bot_id) if origin_bot_id else None, main_bot, partner
+    )
     try:
-        await message.bot.send_message(
+        await notify_bot.send_message(
             wd.user_tg_id, t("withdraw_rejected_notify", ulang, id=wd.id, reason=reason)
         )
     except Exception:
         logger.exception("failed to notify user %s of rejection", wd.user_tg_id)
+    finally:
+        if close_notify_bot:
+            await notify_bot.session.close()
 
 
 # ── History & admin ──────────────────────────────────────────
@@ -1219,8 +1332,14 @@ async def cb_orders(call: CallbackQuery, service: OrderService, lang: str) -> No
 
 
 @router.message(Command("stats"))
-async def cmd_stats(message: Message, service: OrderService, settings: Settings, lang: str) -> None:
-    if not message.from_user or not settings.is_admin(message.from_user.id):
+async def cmd_stats(
+    message: Message,
+    service: OrderService,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
+) -> None:
+    if not _is_admin_message(message, settings, main_bot):
         await message.answer(t("admin_only", lang))
         return
     stats = await service.stats()
@@ -1239,13 +1358,29 @@ async def cmd_stats(message: Message, service: OrderService, settings: Settings,
 # ── Admin panel ──────────────────────────────────────────────
 
 
-def _is_admin_call(call: CallbackQuery, settings: Settings) -> bool:
-    return bool(call.from_user and settings.is_admin(call.from_user.id))
+def _is_admin_call(call: CallbackQuery, settings: Settings, main_bot: Bot) -> bool:
+    return bool(
+        call.bot
+        and call.bot.id == main_bot.id
+        and call.from_user
+        and settings.is_admin(call.from_user.id)
+    )
+
+
+def _is_admin_message(message: Message, settings: Settings, main_bot: Bot) -> bool:
+    return bool(
+        message.bot
+        and message.bot.id == main_bot.id
+        and message.from_user
+        and settings.is_admin(message.from_user.id)
+    )
 
 
 @router.callback_query(F.data == "admin:show")
-async def cb_admin(call: CallbackQuery, settings: Settings, lang: str) -> None:
-    if not _is_admin_call(call, settings):
+async def cb_admin(
+    call: CallbackQuery, settings: Settings, main_bot: Bot, lang: str
+) -> None:
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await _render(call, t("admin_panel", lang), keyboards.admin_menu(lang))
@@ -1258,9 +1393,10 @@ async def cb_admin_stats(
     service: OrderService,
     referral: ReferralService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     d1 = await service.period_stats(1)
@@ -1287,9 +1423,13 @@ async def cb_admin_stats(
 
 @router.callback_query(F.data == "admin:topup")
 async def cb_admin_topup(
-    call: CallbackQuery, state: FSMContext, settings: Settings, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await state.clear()
@@ -1319,9 +1459,14 @@ async def _show_users_page(event: Message | CallbackQuery, service: OrderService
 
 @router.callback_query(F.data == "admin:finduser")
 async def cb_admin_finduser(
-    call: CallbackQuery, state: FSMContext, service: OrderService, settings: Settings, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await state.clear()
@@ -1331,9 +1476,14 @@ async def cb_admin_finduser(
 
 @router.callback_query(F.data.startswith("admin:users:"))
 async def cb_admin_users_page(
-    call: CallbackQuery, state: FSMContext, service: OrderService, settings: Settings, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    service: OrderService,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await state.clear()
@@ -1344,9 +1494,13 @@ async def cb_admin_users_page(
 
 @router.callback_query(F.data == "admin:search")
 async def cb_admin_search(
-    call: CallbackQuery, state: FSMContext, settings: Settings, lang: str
+    call: CallbackQuery,
+    state: FSMContext,
+    settings: Settings,
+    main_bot: Bot,
+    lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     await state.set_state(AdminStates.entering_user_id)
@@ -1360,9 +1514,10 @@ async def cb_admin_user(
     service: OrderService,
     referral: ReferralService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     parts = (call.data or "").split(":")
@@ -1413,9 +1568,10 @@ async def on_admin_user_query(
     service: OrderService,
     referral: ReferralService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
-    if not (message.from_user and settings.is_admin(message.from_user.id)):
+    if not _is_admin_message(message, settings, main_bot):
         await state.clear()
         return
     raw = (message.text or "").strip()
@@ -1442,9 +1598,10 @@ async def cb_admin_ban(
     service: OrderService,
     referral: ReferralService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     parts = (call.data or "").split(":")
@@ -1461,9 +1618,10 @@ async def cb_admin_unban(
     service: OrderService,
     referral: ReferralService,
     settings: Settings,
+    main_bot: Bot,
     lang: str,
 ) -> None:
-    if not _is_admin_call(call, settings):
+    if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
     parts = (call.data or "").split(":")

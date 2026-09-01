@@ -20,6 +20,13 @@ from app.db.models import (
     WithdrawalStatus,
 )
 
+# Serialize GGP delivery claims across every bot process.  A process-local asyncio
+# lock would not protect multi-worker deployments; PostgreSQL transaction advisory
+# locks are released automatically on commit/rollback (including process crashes).
+# Keep this in signed-int32 range so asyncpg selects PostgreSQL's one-argument
+# bigint overload without first trying to encode an out-of-range int4 literal.
+_GGP_CLAIM_LOCK_ID = 0x47475043  # ASCII: "GGPC"
+
 
 class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -365,6 +372,13 @@ class OrderRepository:
         result = await self._session.execute(select(Order).where(Order.order_id == order_id))
         return result.scalar_one_or_none()
 
+    async def get_by_order_id_for_update(self, order_id: str) -> Order | None:
+        """Load an order under a row lock until the surrounding transaction ends."""
+        result = await self._session.execute(
+            select(Order).where(Order.order_id == order_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def list_for_buyer(self, buyer_tg_id: int, limit: int = 20) -> list[Order]:
         result = await self._session.execute(
             select(Order)
@@ -434,6 +448,104 @@ class OrderRepository:
             .limit(1)
         )
         return result.scalars().first()
+
+    async def claim_pending_crypto(
+        self, order_id: str, *, buyer_tg_id: int | None = None
+    ) -> Order | None:
+        """Claim only the FIFO head, with at most one GGP delivery in flight.
+
+        The transaction-scoped PostgreSQL advisory lock serializes claims across
+        processes.  The persisted PAID state then acts as a lease that deliberately
+        blocks later orders while ``buyStars`` is running.  We never silently steal
+        a later deposit for another order.
+        """
+        await self._session.execute(select(func.pg_advisory_xact_lock(_GGP_CLAIM_LOCK_ID)))
+
+        in_flight = await self._session.scalar(
+            select(Order.id)
+            .where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PAID.value,
+            )
+            .limit(1)
+        )
+        if in_flight is not None:
+            return None
+
+        oldest_id = await self._session.scalar(
+            select(Order.id)
+            .where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PENDING.value,
+            )
+            .order_by(Order.created_at.asc(), Order.id.asc())
+            .limit(1)
+        )
+        if oldest_id is None:
+            return None
+
+        conditions = [
+            Order.id == oldest_id,
+            Order.order_id == order_id,
+            Order.provider == "ggp",
+            Order.status == OrderStatusEnum.PENDING.value,
+        ]
+        if buyer_tg_id is not None:
+            conditions.append(Order.buyer_tg_id == buyer_tg_id)
+        result = await self._session.execute(
+            select(Order).where(*conditions).with_for_update()
+        )
+        order = result.scalar_one_or_none()
+        if order is None:
+            return None
+        order.status = OrderStatusEnum.PAID.value
+        await self._session.flush()
+        return order
+
+    async def finish_crypto_claim(
+        self,
+        order_id: str,
+        *,
+        status: str,
+        ggp_tx_id: str | None = None,
+    ) -> Order | None:
+        """Finish/release a GGP claim only while it is still in PAID state."""
+        values: dict[str, Any] = {"status": status}
+        if ggp_tx_id is not None:
+            values["ggp_tx_id"] = ggp_tx_id
+        result = await self._session.execute(
+            update(Order)
+            .where(
+                Order.order_id == order_id,
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PAID.value,
+            )
+            .values(**values)
+            .returning(Order.order_id)
+        )
+        finished_order_id = result.scalar_one_or_none()
+        if finished_order_id is None:
+            return None
+        return await self.get_by_order_id(finished_order_id)
+
+    async def fail_stale_crypto_claims(self, older_than_minutes: int) -> int:
+        """Quarantine abandoned GGP claims without risking a duplicate delivery.
+
+        A PAID row may mean ``buyStars`` succeeded but the process died before the
+        final DB write.  It is therefore unsafe to put such a row back into the
+        retry queue automatically; ERROR requires operator reconciliation instead.
+        """
+        cutoff = datetime.now(tz=UTC) - timedelta(minutes=older_than_minutes)
+        result = await self._session.execute(
+            update(Order)
+            .where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.PAID.value,
+                Order.updated_at < cutoff,
+            )
+            .values(status=OrderStatusEnum.ERROR.value)
+        )
+        return result.rowcount or 0
 
     async def pending_crypto_order(self, buyer_tg_id: int) -> Order | None:
         """The buyer's current unpaid crypto order, if any (one-at-a-time guard)."""

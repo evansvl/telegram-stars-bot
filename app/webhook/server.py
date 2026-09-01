@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from typing import Any
 
 from aiogram import Bot
@@ -52,39 +53,47 @@ async def _handle_webhook(request: web.Request) -> web.Response:
 
     body = await request.read()
 
-    # Optional shared-secret gate (header), in addition to RSA signature.
+    # Optional operator-managed gate, in addition to the mandatory WATA signature.
     if settings.webhook_secret:
         provided = request.headers.get("X-Webhook-Secret", "")
-        if provided != settings.webhook_secret:
+        if not secrets.compare_digest(provided, settings.webhook_secret):
             logger.warning("webhook rejected: bad shared secret")
             return web.Response(status=403, text="forbidden")
 
     signature = request.headers.get("X-Signature")
-    verified = await verifier.verify(body, signature)
-    if not verified:
-        # Don't hard-fail if we couldn't load the key — log and continue, since
-        # we re-verify the truth via GET /stars/order. But reject if a key exists
-        # and the signature is clearly invalid.
-        if await verifier.public_key() is not None and signature:
-            logger.warning("webhook rejected: invalid X-Signature")
-            return web.Response(status=403, text="bad signature")
-        logger.warning("webhook signature not verified (continuing via status re-fetch)")
+    if not signature:
+        logger.warning("webhook rejected: missing X-Signature")
+        return web.Response(status=403, text="missing signature")
+    if await verifier.public_key() is None:
+        # A post-payment notification is retried by WATA after non-2xx responses.
+        # Failing closed is more important than acknowledging an unverified payment.
+        logger.error("webhook verification unavailable: WATA public key not loaded")
+        return web.Response(status=503, text="verification unavailable")
+    if not await verifier.verify(body, signature):
+        logger.warning("webhook rejected: invalid X-Signature")
+        return web.Response(status=403, text="bad signature")
 
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         logger.error("webhook: invalid JSON body")
         return web.Response(status=400, text="invalid json")
-
-    logger.info("webhook received payload=%s", payload)
+    if not isinstance(payload, dict):
+        logger.error("webhook: JSON payload is not an object")
+        return web.Response(status=400, text="invalid payload")
 
     order_id = _extract_order_id(payload)
     if not order_id:
         logger.warning("webhook without orderId; acknowledging")
         return web.Response(status=200, text="ok")
+    logger.info("verified WATA webhook received order_id=%s", order_id)
 
     # WATA is the source of truth: re-fetch status (and auto-confirm if enabled).
-    order = await service.sync_order(order_id, raw_webhook=payload)
+    try:
+        order = await service.sync_order(order_id, raw_webhook=payload)
+    except Exception:
+        logger.exception("WATA order verification failed order_id=%s", order_id)
+        return web.Response(status=503, text="status verification failed")
     if order is None:
         logger.warning("webhook for unknown order order_id=%s", order_id)
         return web.Response(status=200, text="ok")

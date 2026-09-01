@@ -57,6 +57,16 @@ class CryptoDeliveryWorker:
             raise
 
     async def _tick(self) -> None:
+        # A crash during the non-idempotent buyStars call leaves an intentionally
+        # ambiguous PAID claim. Never retry it automatically: quarantine it for
+        # operator reconciliation, avoiding a possible duplicate delivery.
+        stale_claims = await self._service.fail_stale_crypto_claims()
+        if stale_claims:
+            logger.error(
+                "quarantined %d stale GGP delivery claim(s) for manual reconciliation",
+                stale_claims,
+            )
+
         # Auto-cancel orders left unpaid past the TTL first: frees their TON amount
         # and the buyer's one-order slot, and keeps the FIFO queue from clogging.
         expired = await self._service.expire_stale_crypto()

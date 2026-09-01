@@ -59,6 +59,8 @@ class OrderStatus:
 
     order_id: str
     status: str
+    username: str
+    count: int
     price: Decimal
     commission: Decimal
     amount: Decimal
@@ -69,6 +71,8 @@ class OrderStatus:
         return cls(
             order_id=str(data.get("orderId") or data.get("id") or ""),
             status=str(data.get("status", "")),
+            username=str(data.get("username", "")),
+            count=int(data.get("count") or 0),
             price=_to_decimal(data.get("price")),
             commission=_to_decimal(data.get("commission")),
             amount=_to_decimal(data.get("amount")),

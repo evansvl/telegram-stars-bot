@@ -36,13 +36,9 @@ class Settings(BaseSettings):
     auto_confirm: bool = True
 
     # ── Crypto rail: TON via GreenGamePay ────────────────────────
-    # Enabled automatically when the GGP credentials + deposit address are all set
-    # (see the crypto_enabled property). The buyer pays in TON to our GGP deposit
-    # address, which tops up our GGP balance; we then deliver via GGP /api/buyStars.
-    # Delivery is gated on the GGP balance (check_balance), not on scanning the
-    # chain — the operator always receives the funds, so as soon as the balance
-    # covers the purchase, buyStars runs. Crypto gets a cheaper star rate, so it
-    # has its OWN, lower markup (added on top of the GGP wholesale TON price).
+    # The legacy balance-only rail is permanently disabled (see crypto_enabled).
+    # Credentials are retained only for a future transaction-verified implementation.
+    # Do not re-enable it until a deposit is bound to one order by transaction hash.
     crypto_markup_percent: float = 10.0
     # GreenGamePay credentials/host (secrets via env only, never committed).
     ggp_username: str = ""
@@ -102,10 +98,9 @@ class Settings(BaseSettings):
     webhook_path: str = "/wata/webhook"
     webhook_secret: str = ""
 
-    # Telegram updates (aiogram webhook). secret_token is sent by Telegram in the
-    # X-Telegram-Bot-Api-Secret-Token header and verified by aiogram.
+    # Telegram updates (aiogram webhook). secret_token is always derived from
+    # BOT_TOKEN and verified in X-Telegram-Bot-Api-Secret-Token.
     telegram_webhook_path: str = "/tg/webhook"
-    telegram_webhook_secret: str = ""
 
     # Reference @username used to quote the displayed "1 ⭐ rate" (cached ~1h).
     rate_reference_username: str = "hahahahgaha"
@@ -138,11 +133,16 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_rails(self) -> Settings:
-        """At least one payment rail must be configured (card and/or crypto)."""
-        if not (self.wata_enabled or self.crypto_enabled):
+        """Require the verified WATA rail while legacy GGP remains disabled."""
+        if not self.wata_enabled:
+            crypto_hint = (
+                " (GGP credentials are present, but balance-only delivery is blocked; "
+                "use transaction-level TON verification before enabling it)"
+                if self.ggp_configured
+                else ""
+            )
             raise ValueError(
-                "no payment rail configured: set WATA_TOKEN (card) and/or the GGP "
-                "credentials + GGP_TON_ADDRESS (crypto)"
+                f"no safe payment rail configured: set WATA_TOKEN (card){crypto_hint}"
             )
         return self
 
@@ -153,7 +153,12 @@ class Settings(BaseSettings):
 
     @property
     def crypto_enabled(self) -> bool:
-        """Crypto rail is on when GGP credentials and a deposit address are set."""
+        """The unverified shared-balance GGP rail is permanently disabled."""
+        return False
+
+    @property
+    def ggp_configured(self) -> bool:
+        """Whether all GGP credentials are present, independent of the safety gate."""
         return bool(self.ggp_username and self.ggp_password and self.ggp_ton_address)
 
     @property

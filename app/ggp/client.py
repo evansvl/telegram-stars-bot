@@ -90,6 +90,7 @@ class GgpClient:
         *,
         json: dict[str, Any] | None = None,
         authed: bool = True,
+        retry_safe: bool = True,
     ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
         last_exc: Exception | None = None
@@ -106,10 +107,20 @@ class GgpClient:
                     if resp.status < 400:
                         return body if isinstance(body, dict) else {"data": body}
                     # An expired token mid-flight: refresh once and retry.
-                    if resp.status == 401 and authed and attempt < _MAX_RETRIES:
+                    if (
+                        resp.status == 401
+                        and authed
+                        and attempt < _MAX_RETRIES
+                    ):
+                        # A 401 definitively rejects the call before its side effect,
+                        # so refreshing the token is safe even for ``buyStars``.
                         await self._ensure_token(force=True)
                         continue
-                    if resp.status in _RETRY_STATUSES and attempt < _MAX_RETRIES:
+                    if (
+                        resp.status in _RETRY_STATUSES
+                        and retry_safe
+                        and attempt < _MAX_RETRIES
+                    ):
                         await self._sleep_backoff(attempt, resp.status)
                         continue
                     raise GgpApiError(
@@ -117,7 +128,7 @@ class GgpClient:
                     )
             except (TimeoutError, aiohttp.ClientError) as exc:
                 last_exc = exc
-                if attempt < _MAX_RETRIES:
+                if retry_safe and attempt < _MAX_RETRIES:
                     await self._sleep_backoff(attempt, None)
                     continue
                 raise GgpNetworkError(f"GGP request failed: {exc}") from exc
@@ -155,7 +166,12 @@ class GgpClient:
     async def buy_stars(self, username: str, quantity: int) -> BuyResult:
         """POST /api/buyStars — deliver ``quantity`` stars to ``username`` from balance."""
         data = await self._request(
-            "POST", "/api/buyStars", json={"username": username, "quantity": quantity}
+            "POST",
+            "/api/buyStars",
+            json={"username": username, "quantity": quantity},
+            # No provider idempotency key is available. Retrying an ambiguous POST
+            # after a timeout could deliver (and charge for) the same stars twice.
+            retry_safe=False,
         )
         return BuyResult.from_api(data)
 
