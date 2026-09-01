@@ -6,9 +6,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.models import (
     Order,
@@ -26,6 +27,22 @@ from app.db.models import (
 # Keep this in signed-int32 range so asyncpg selects PostgreSQL's one-argument
 # bigint overload without first trying to encode an out-of-range int4 literal.
 _GGP_CLAIM_LOCK_ID = 0x47475043  # ASCII: "GGPC"
+
+# Serialize payment-proof matches across processes. Besides the database-wide unique
+# constraint on tx hash, this makes the "unused hash" check return a clean no-op under
+# a duplicate concurrent notification instead of surfacing an IntegrityError.
+_TON_PAYMENT_MATCH_LOCK_ID = 0x544F4E4D  # ASCII: "TONM"
+
+
+def _delivered_order_filter() -> ColumnElement[bool]:
+    """SQL predicate for genuinely delivered orders across provider lifecycles."""
+    return or_(
+        Order.status == OrderStatusEnum.SUCCESS.value,
+        and_(
+            Order.provider != "ggp",
+            Order.status == OrderStatusEnum.PAID.value,
+        ),
+    )
 
 
 class UserRepository:
@@ -297,9 +314,7 @@ class PartnerBotRepository:
         return list(result.scalars().all())
 
     async def list_active(self) -> list[PartnerBot]:
-        result = await self._session.execute(
-            select(PartnerBot).where(PartnerBot.active.is_(True))
-        )
+        result = await self._session.execute(select(PartnerBot).where(PartnerBot.active.is_(True)))
         return list(result.scalars().all())
 
     async def set_markup(self, bot_id: int, markup_percent: Decimal) -> PartnerBot | None:
@@ -343,6 +358,7 @@ class OrderRepository:
         status: str = OrderStatusEnum.NEW.value,
         provider: str = "wata",
         ton_amount: Decimal | None = None,
+        payment_expires_at: datetime | None = None,
         partner_owner_tg_id: int | None = None,
         partner_earning: Decimal = Decimal("0"),
         bot_id: int | None = None,
@@ -358,6 +374,7 @@ class OrderRepository:
             status=status,
             provider=provider,
             ton_amount=ton_amount,
+            payment_expires_at=payment_expires_at,
             partner_owner_tg_id=partner_owner_tg_id,
             partner_earning=partner_earning,
             bot_id=bot_id,
@@ -420,44 +437,119 @@ class OrderRepository:
         return order
 
     async def outstanding_ton_amounts(self) -> set[Decimal]:
-        """TON amounts of still-payable/in-flight crypto orders (for jitter uniqueness).
+        """Every TON invoice amount ever issued (for permanent non-reuse).
 
-        Covers both PENDING (awaiting payment) and PAID (mid-delivery) so a new order
-        never reuses an amount another order is still using.
+        Address + shared GGP memo + amount are the only available invoice identity.
+        Reusing an expired amount could let a late old transfer satisfy a new order,
+        so terminal and legacy amounts remain reserved as well.
         """
         result = await self._session.execute(
             select(Order.ton_amount).where(
                 Order.provider == "ggp",
-                Order.status.in_(
-                    [OrderStatusEnum.PENDING.value, OrderStatusEnum.PAID.value]
-                ),
                 Order.ton_amount.is_not(None),
             )
         )
         return {row for row in result.scalars().all() if row is not None}
 
-    async def oldest_pending_crypto(self) -> Order | None:
-        """The oldest still-unpaid crypto order (FIFO delivery target)."""
-        result = await self._session.execute(
-            select(Order)
+    async def oldest_pending_crypto_created_at(self) -> datetime | None:
+        """Creation time of the oldest GGP order still awaiting an on-chain payment."""
+        return await self._session.scalar(
+            select(Order.created_at)
             .where(
                 Order.provider == "ggp",
                 Order.status == OrderStatusEnum.PENDING.value,
             )
-            .order_by(Order.created_at.asc())
+            .order_by(Order.created_at.asc(), Order.id.asc())
+            .limit(1)
+        )
+
+    async def match_pending_crypto_payment(
+        self,
+        *,
+        ton_amount: Decimal,
+        tx_hash: str,
+        tx_lt: int,
+        tx_utime: datetime,
+        reconciliation_grace_minutes: int = 0,
+        order_id: str | None = None,
+    ) -> Order | None:
+        """Atomically bind an unused on-chain payment to its exact pending order.
+
+        The transaction timestamp must fall within the order-specific payment window
+        plus a short reconciliation grace.  That grace absorbs the race where a
+        transfer was already broadcast when the visible deadline/cancel action
+        closed the invoice, but Toncenter records its block a little later. A matched
+        order moves PENDING -> REVIEW and owns the transaction hash forever.
+        """
+        if not tx_hash:
+            raise ValueError("TON payment transaction hash must not be empty")
+
+        await self._session.execute(select(func.pg_advisory_xact_lock(_TON_PAYMENT_MATCH_LOCK_ID)))
+        used_payment = Order.__table__.alias("used_ton_payment")
+        unused_tx_hash = ~(
+            select(used_payment.c.id).where(used_payment.c.ton_payment_tx_hash == tx_hash).exists()
+        )
+        # TON exposes a block timestamp rather than the wallet's local broadcast
+        # time. Accepting the same bounded grace used by expiration avoids taking a
+        # real payment without fulfilling it. Invoice amounts are never reused, so
+        # this cannot make an old transfer satisfy a different order.
+        latest_stored_deadline = tx_utime - timedelta(minutes=max(0, reconciliation_grace_minutes))
+        conditions = [
+            Order.provider == "ggp",
+            Order.status == OrderStatusEnum.PENDING.value,
+            Order.ton_amount == ton_amount,
+            Order.ton_payment_tx_hash.is_(None),
+            Order.payment_expires_at.is_not(None),
+            # TON utime has whole-second precision, while PostgreSQL created_at
+            # commonly carries microseconds. Floor the lower boundary so a valid
+            # payment in the order's creation second is not rejected.
+            func.date_trunc("second", Order.created_at) <= tx_utime,
+            Order.payment_expires_at >= latest_stored_deadline,
+            unused_tx_hash,
+        ]
+        if order_id is not None:
+            conditions.append(Order.order_id == order_id)
+        result = await self._session.execute(
+            update(Order)
+            .where(*conditions)
+            .values(
+                status=OrderStatusEnum.REVIEW.value,
+                ton_payment_tx_hash=tx_hash,
+                ton_payment_lt=tx_lt,
+                ton_payment_utime=tx_utime,
+            )
+            .returning(Order.order_id)
+        )
+        order_id = result.scalar_one_or_none()
+        if order_id is None:
+            return None
+        return await self.get_by_order_id(order_id)
+
+    async def oldest_verified_crypto(self) -> Order | None:
+        """Oldest verified GGP order awaiting delivery (the global FIFO head)."""
+        result = await self._session.execute(
+            select(Order)
+            .where(
+                Order.provider == "ggp",
+                Order.status == OrderStatusEnum.REVIEW.value,
+                Order.ton_payment_tx_hash.is_not(None),
+                Order.ton_payment_lt.is_not(None),
+                Order.ton_payment_utime.is_not(None),
+            )
+            .order_by(Order.created_at.asc(), Order.id.asc())
             .limit(1)
         )
         return result.scalars().first()
 
-    async def claim_pending_crypto(
+    async def claim_verified_crypto(
         self, order_id: str, *, buyer_tg_id: int | None = None
     ) -> Order | None:
-        """Claim only the FIFO head, with at most one GGP delivery in flight.
+        """Claim only the verified FIFO head, with one GGP delivery in flight.
 
         The transaction-scoped PostgreSQL advisory lock serializes claims across
         processes.  The persisted PAID state then acts as a lease that deliberately
-        blocks later orders while ``buyStars`` is running.  We never silently steal
-        a later deposit for another order.
+        blocks later orders while ``buyStars`` is running. Only an order whose TON
+        payment has already moved it to REVIEW can be claimed for delivery.
         """
         await self._session.execute(select(func.pg_advisory_xact_lock(_GGP_CLAIM_LOCK_ID)))
 
@@ -476,7 +568,10 @@ class OrderRepository:
             select(Order.id)
             .where(
                 Order.provider == "ggp",
-                Order.status == OrderStatusEnum.PENDING.value,
+                Order.status == OrderStatusEnum.REVIEW.value,
+                Order.ton_payment_tx_hash.is_not(None),
+                Order.ton_payment_lt.is_not(None),
+                Order.ton_payment_utime.is_not(None),
             )
             .order_by(Order.created_at.asc(), Order.id.asc())
             .limit(1)
@@ -488,13 +583,14 @@ class OrderRepository:
             Order.id == oldest_id,
             Order.order_id == order_id,
             Order.provider == "ggp",
-            Order.status == OrderStatusEnum.PENDING.value,
+            Order.status == OrderStatusEnum.REVIEW.value,
+            Order.ton_payment_tx_hash.is_not(None),
+            Order.ton_payment_lt.is_not(None),
+            Order.ton_payment_utime.is_not(None),
         ]
         if buyer_tg_id is not None:
             conditions.append(Order.buyer_tg_id == buyer_tg_id)
-        result = await self._session.execute(
-            select(Order).where(*conditions).with_for_update()
-        )
+        result = await self._session.execute(select(Order).where(*conditions).with_for_update())
         order = result.scalar_one_or_none()
         if order is None:
             return None
@@ -509,7 +605,21 @@ class OrderRepository:
         status: str,
         ggp_tx_id: str | None = None,
     ) -> Order | None:
-        """Finish/release a GGP claim only while it is still in PAID state."""
+        """Finish or release a GGP claim only while it remains in PAID state.
+
+        REVIEW releases a claim after an insufficient provider balance. SUCCESS and
+        ERROR are terminal delivery outcomes. A successful delivery must carry the
+        provider transaction id used later as credit proof.
+        """
+        allowed = {
+            OrderStatusEnum.REVIEW.value,
+            OrderStatusEnum.SUCCESS.value,
+            OrderStatusEnum.ERROR.value,
+        }
+        if status not in allowed:
+            raise ValueError(f"invalid GGP claim outcome: {status}")
+        if status == OrderStatusEnum.SUCCESS.value and not ggp_tx_id:
+            raise ValueError("successful GGP delivery requires ggp_tx_id")
         values: dict[str, Any] = {"status": status}
         if ggp_tx_id is not None:
             values["ggp_tx_id"] = ggp_tx_id
@@ -548,35 +658,43 @@ class OrderRepository:
         return result.rowcount or 0
 
     async def pending_crypto_order(self, buyer_tg_id: int) -> Order | None:
-        """The buyer's current unpaid crypto order, if any (one-at-a-time guard)."""
+        """The buyer's active crypto order, if any (one-at-a-time guard)."""
         result = await self._session.execute(
             select(Order)
             .where(
                 Order.buyer_tg_id == buyer_tg_id,
                 Order.provider == "ggp",
-                Order.status == OrderStatusEnum.PENDING.value,
+                Order.status.in_(
+                    [
+                        OrderStatusEnum.PENDING.value,
+                        OrderStatusEnum.REVIEW.value,
+                        OrderStatusEnum.PAID.value,
+                    ]
+                ),
             )
             .order_by(Order.created_at.desc())
             .limit(1)
         )
         return result.scalars().first()
 
-    async def expire_stale_crypto(self, older_than_minutes: int) -> int:
-        """Auto-cancel PENDING crypto orders older than the TTL. Returns the count."""
-        cutoff = datetime.now(tz=UTC) - timedelta(minutes=older_than_minutes)
+    async def expire_stale_crypto(self, reconciliation_grace_minutes: int = 0) -> int:
+        """Expire only after deadline + indexer/finality reconciliation grace."""
+        cutoff = datetime.now(tz=UTC) - timedelta(minutes=max(0, reconciliation_grace_minutes))
         result = await self._session.execute(
             update(Order)
             .where(
                 Order.provider == "ggp",
                 Order.status == OrderStatusEnum.PENDING.value,
-                Order.created_at < cutoff,
+                Order.payment_expires_at.is_not(None),
+                Order.payment_expires_at <= cutoff,
             )
             .values(status=OrderStatusEnum.EXPIRED.value)
         )
         return result.rowcount or 0
 
     async def cancel_pending_crypto(self, order_id: str, buyer_tg_id: int) -> bool:
-        """Buyer-cancel their own PENDING crypto order. Returns True if it was cancelled."""
+        """Close the payment window, retaining a grace period for in-flight TON."""
+        now = datetime.now(tz=UTC)
         result = await self._session.execute(
             update(Order)
             .where(
@@ -584,8 +702,10 @@ class OrderRepository:
                 Order.buyer_tg_id == buyer_tg_id,
                 Order.provider == "ggp",
                 Order.status == OrderStatusEnum.PENDING.value,
+                Order.payment_expires_at.is_not(None),
+                Order.payment_expires_at > now,
             )
-            .values(status=OrderStatusEnum.EXPIRED.value)
+            .values(payment_expires_at=now)
         )
         return (result.rowcount or 0) > 0
 
@@ -610,8 +730,7 @@ class OrderRepository:
 
     async def buyer_stats(self, buyer_tg_id: int) -> dict[str, Any]:
         """A single buyer's paid totals: order count, stars bought, money spent."""
-        paid = [OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value]
-        flt = (Order.buyer_tg_id == buyer_tg_id) & Order.status.in_(paid)
+        flt = and_(Order.buyer_tg_id == buyer_tg_id, _delivered_order_filter())
         orders = await self._session.scalar(select(func.count()).select_from(Order).where(flt))
         stars = await self._session.scalar(
             select(func.coalesce(func.sum(Order.count), 0)).where(flt)
@@ -623,9 +742,8 @@ class OrderRepository:
 
     async def period_stats(self, days: int) -> dict[str, Any]:
         """Paid totals over the last ``days`` days: orders, stars, revenue, margin."""
-        paid = [OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value]
         since = datetime.now(tz=UTC) - timedelta(days=days)
-        flt = Order.status.in_(paid) & (Order.created_at >= since)
+        flt = and_(_delivered_order_filter(), Order.created_at >= since)
         orders = await self._session.scalar(select(func.count()).select_from(Order).where(flt))
         stars = await self._session.scalar(
             select(func.coalesce(func.sum(Order.count), 0)).where(flt)
@@ -645,12 +763,8 @@ class OrderRepository:
 
     async def stats(self) -> dict[str, Any]:
         """Aggregate turnover / order count / total margin for paid+ orders."""
-        paid_states = [
-            OrderStatusEnum.PAID.value,
-            OrderStatusEnum.SUCCESS.value,
-        ]
         total_orders = await self._session.scalar(select(func.count()).select_from(Order))
-        paid_filter = Order.status.in_(paid_states)
+        paid_filter = _delivered_order_filter()
         turnover = await self._session.scalar(
             select(func.coalesce(func.sum(Order.amount), 0)).where(paid_filter)
         )

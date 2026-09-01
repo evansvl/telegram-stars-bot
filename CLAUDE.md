@@ -48,12 +48,13 @@ reverse proxy:
 
 - `TELEGRAM_WEBHOOK_PATH` (default `/tg/webhook`) — main bot updates via aiogram `SimpleRequestHandler`
 - `WEBHOOK_PATH` (default `/wata/webhook`) — WATA payment notifications (custom handler)
-- `/partner/{bot_token}` — all partner bots, via aiogram `TokenBasedRequestHandler` (multibot)
+- `/partner/{bot_id}` — partner bots resolved from active DB rows; each request uses a
+  per-bot HMAC webhook secret and no bot token appears in the URL
 - `/health`
 
 `WEBHOOK_HOST` is **required** or the process exits. On startup the bot calls `set_webhook` for itself
 and for every active partner bot; on shutdown it deletes its webhook. The Telegram secret token is
-`TELEGRAM_WEBHOOK_SECRET` or, if empty, `sha256(BOT_TOKEN)`.
+always derived as `sha256(BOT_TOKEN)`; an environment override is intentionally not supported.
 
 ### Layering
 
@@ -61,7 +62,7 @@ and for every active partner bot; on shutdown it deletes its webhook. The Telegr
 `pricing`/`i18n` leaf modules.
 
 - **`app/services.py`** is the core. Three service classes, each holding `Settings` + `Database`:
-  - `OrderService` — pricing/quote, `create_order` (WATA) and `create_crypto_order` (GGP), `sync_order`, crypto delivery (`oldest_pending_crypto`, `try_deliver_crypto`, `deliver_ggp_order`), stats, language cache, `simulate_payment` (test mode). Holds an optional `GgpClient` (None when crypto disabled); `wata_enabled`/`crypto_enabled` gate the rails.
+  - `OrderService` — pricing/quote, `create_order` (WATA) and `create_crypto_order` (GGP), `sync_order`, verified TON matching and GGP delivery, stats, language cache, `simulate_payment` (test mode). Holds optional `GgpClient`/`TonScanner` clients (None when crypto is disabled); `wata_enabled`/`crypto_enabled` gate the rails.
   - `ReferralService` — referral attribution, `credit_for_order` (idempotent per order), balance, withdrawals.
   - `PartnerService` — partner bot CRUD, per-bot markup, markup cache.
 - **`app/db/repositories.py`** — thin per-aggregate repositories; each takes an `AsyncSession`. Upserts use Postgres `ON CONFLICT` (`pg_insert`).
@@ -94,28 +95,25 @@ the source of truth** — `OrderService.sync_order` re-fetches authoritative sta
 (and auto-confirms `Review → Paid` when `AUTO_CONFIRM`). Errors raise `WataApiError`/`WataNetworkError`,
 whose `message_key()` returns an i18n key (not user text).
 
-### GGP / crypto rail (`app/ggp/`, `app/ton/poller.py`)
+### GGP / crypto rail (`app/ggp/`, `app/ton/scanner.py`, `app/ton/poller.py`)
 
 `GgpClient` wraps GreenGamePay: `/api/token` (short-lived, auto-refreshed), `/api/get_stars_price`
-(returns `{ton, rub}`), `/api/buyStars(username, quantity)`, `/api/check_balance`. Errors raise
+(returns `{ton, rub}`), `/api/buyStars(username, quantity)`, `/api/get_ton_balance`. Errors raise
 `GgpApiError`/`GgpNetworkError` with a `message_key()` (same i18n contract as WATA).
 
-**Delivery is gated on the operator's GGP balance, not on scanning the chain.** The buyer pays TON to the
-operator's GGP deposit address (`GGP_TON_ADDRESS`); the operator's balance rises; delivery then runs
-`buyStars`. There is **no per-buyer on-chain matching** — the accepted trade-off (operator always receives
-the TON) is that we deliver FIFO: `oldest_pending_crypto()` picks the oldest `PENDING` `provider="ggp"`
-order and `try_deliver_crypto` delivers it iff `check_balance() > 0`. Two triggers share this path: the
-buyer's "✅ I paid" button (`cb_crypto_paid`) and the background `CryptoDeliveryWorker` (`app/ton/poller.py`,
-an asyncio task started/stopped in `main.py`, polling every `TON_POLL_INTERVAL`s). On a `buyStars` failure,
-`deliver_ggp_order` reverts to `PENDING` (retryable) if the message looks like insufficient balance
-(`_looks_insufficient` heuristic in `services.py`), else marks `ERROR` (permanent) so the failed order
-stops blocking the FIFO head. (There is **no** `app/ton/scanner.py` / toncenter polling anymore — it was
-removed in favour of this balance model.)
+**A shared GGP balance is never payment proof.** `TonScanner` reads Toncenter v3 and accepts only
+finalized, non-emulated, non-aborted, non-bounced incoming transfers to the configured deposit account.
+`OrderService` then binds a transfer atomically to one `PENDING` order using the exact TON amount, exact
+memo, order payment window and globally unique transaction hash. Only a proved `REVIEW` order may enter
+the serialized FIFO GGP claim (`REVIEW → PAID`) and call `buyStars`. `/api/get_ton_balance` is merely a
+provider-readiness check after that claim. Only GGP's exact definitive insufficient-funds rejection releases
+the claim back to `REVIEW`; ambiguous non-idempotent failures are quarantined and never retried automatically.
+Both the buyer's “I paid” button and `CryptoDeliveryWorker` use this verified flow.
 
 ### Order & money flows
 
 Order status (`OrderStatusEnum`, a `StrEnum`): WATA orders go `New → Pending → Review → Paid/Refunded →
-Success/Fail` (plus `Error`); crypto orders go `Pending → Paid → Success` (or `Error`). `Order.provider`
+Success/Fail` (plus `Error`); crypto orders go `Pending → Review → Paid → Success` (or `Error`). `Order.provider`
 is `"wata"` or `"ggp"`. Earnings are credited once an order reaches `Paid`/`Success`, via `credit_for_order`
 (idempotent — one `referral_earnings` row per `order_id`): a partner-bot order pays the partner its
 pre-computed `partner_earning`; otherwise the buyer's referrer earns `REFERRAL_PERCENT` (5%) of the gross.

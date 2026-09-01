@@ -81,9 +81,9 @@ def test_compute_ton_due_zero_markup() -> None:
 def test_jitter_walks_to_first_free_slot() -> None:
     base = Decimal("0.51")
     assert jitter_ton_amount(base, set(), step=_STEP) == Decimal("0.51")
-    assert jitter_ton_amount(base, {Decimal("0.51")}, step=_STEP) == Decimal("0.52")
-    taken = {Decimal("0.51"), Decimal("0.52"), Decimal("0.53")}
-    assert jitter_ton_amount(base, taken, step=_STEP) == Decimal("0.54")
+    assert jitter_ton_amount(base, {Decimal("0.51")}, step=_STEP) == Decimal("0.510000001")
+    taken = {Decimal("0.51"), Decimal("0.510000001"), Decimal("0.510000002")}
+    assert jitter_ton_amount(base, taken, step=_STEP) == Decimal("0.510000003")
 
 
 def test_jitter_amounts_are_unique() -> None:

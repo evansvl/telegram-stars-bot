@@ -194,10 +194,14 @@ TEXTS: dict[str, dict[str, str]] = {
             "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
             "Отправьте эту сумму одной транзакцией:\n"
             "Сумма: <code>{ton}</code> TON\n"
-            "Адрес: <code>{address}</code>\n\n"
+            "Адрес: <code>{address}</code>\n"
+            "Комментарий (memo): <code>{memo}</code>\n\n"
+            "Важно: укажите memo точно как написано — без него платёж нельзя "
+            "автоматически привязать к заказу.\n\n"
             "После оплаты нажмите «✅ Я оплатил» — как только средства поступят, "
             "звёзды придут автоматически (обычно пара минут).\n"
-            "Рекомендуем оплатить в течение ~{ttl} мин.\n\n"
+            "Оплатите в течение ~{ttl} мин. После закрытия окна не отправляйте новый "
+            "перевод; уже начатый платёж бот ещё несколько минут будет проверять.\n\n"
             "Оплатили, но звёзды не пришли? Напишите @nnstorecontactbot."
         ),
         "en": (
@@ -205,28 +209,39 @@ TEXTS: dict[str, dict[str, str]] = {
             "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
             "Send this amount in a single transaction:\n"
             "Amount: <code>{ton}</code> TON\n"
-            "Address: <code>{address}</code>\n\n"
+            "Address: <code>{address}</code>\n"
+            "Comment (memo): <code>{memo}</code>\n\n"
+            "Important: enter the memo exactly as shown; without it the payment "
+            "cannot be matched automatically.\n\n"
             "After paying, tap “✅ I paid” — once the funds arrive, the stars are "
             "delivered automatically (usually a couple of minutes).\n"
-            "We recommend paying within ~{ttl} min.\n\n"
+            "Pay within ~{ttl} min. Once the window closes, do not send a new transfer; "
+            "the bot will keep checking an already-started payment for a few minutes.\n\n"
             "Paid but no stars? Message @nnstorecontactbot."
         ),
     },
     "btn_crypto_paid": {"ru": "✅ Я оплатил", "en": "✅ I paid"},
+    "btn_crypto_recheck": {"ru": "🔄 Проверить выдачу", "en": "🔄 Check delivery"},
     "btn_crypto_cancel": {"ru": "❌ Отменить заказ", "en": "❌ Cancel order"},
     "crypto_already_pending": {
         "ru": (
-            "У вас уже есть незавершённый крипто-заказ. Оплатите его, отмените "
-            "или дождитесь автоотмены (~{ttl} мин) — потом можно создать новый."
+            "У вас уже есть незавершённый крипто-заказ. До конца оплаты осталось "
+            "около {ttl} мин. Оплатите его или отмените — потом можно создать новый."
         ),
         "en": (
-            "You already have an unpaid crypto order. Pay it, cancel it, or wait for "
-            "auto-cancel (~{ttl} min) — then you can create a new one."
+            "You already have an unpaid crypto order with about {ttl} min remaining. "
+            "Pay or cancel it before creating another one."
         ),
     },
     "crypto_cancelled": {
-        "ru": "Заказ отменён. Можно создать новый.",
-        "en": "Order cancelled. You can create a new one.",
+        "ru": (
+            "Оплата закрыта. Не отправляйте новый перевод. Ещё несколько минут "
+            "проверяем TON на случай, если перевод уже был отправлен."
+        ),
+        "en": (
+            "Payment is closed. Do not send a new transfer. We will keep checking TON "
+            "for a few minutes in case one was already broadcast."
+        ),
     },
     "crypto_cancel_gone": {
         "ru": "Этот заказ уже нельзя отменить (оплачен, выдан или отменён).",
@@ -238,12 +253,51 @@ TEXTS: dict[str, dict[str, str]] = {
     },
     "crypto_not_funded": {
         "ru": (
-            "Пока не вижу средств. Если вы только что оплатили — подождите пару минут "
-            "и нажмите ещё раз. Звёзды придут автоматически."
+            "Пока не нашёл подтверждённую транзакцию TON с точной суммой и memo. "
+            "Если вы только что оплатили — подождите пару минут и нажмите ещё раз."
         ),
         "en": (
-            "No funds yet. If you just paid, wait a couple of minutes and tap again. "
-            "The stars will be delivered automatically."
+            "No finalized TON transaction with the exact amount and memo was found yet. "
+            "If you just paid, wait a couple of minutes and tap again."
+        ),
+    },
+    "crypto_payment_verified": {
+        "ru": (
+            "✅ <b>Платёж подтверждён в блокчейне TON</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
+            "Заказ уже в очереди на выдачу. Звёзды придут автоматически — "
+            "не отправляйте оплату повторно."
+        ),
+        "en": (
+            "✅ <b>Payment confirmed on the TON blockchain</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
+            "The order is queued for delivery. The stars will arrive automatically; "
+            "do not send another payment."
+        ),
+    },
+    "crypto_payment_verified_waiting": {
+        "ru": (
+            "Платёж подтверждён в TON. Заказ уже в очереди на выдачу — "
+            "повторно платить не нужно."
+        ),
+        "en": "The TON payment is confirmed. Delivery is queued; do not pay again.",
+    },
+    "crypto_payment_window_closed_alert": {
+        "ru": "Срок оплаты закончился. Не отправляйте новый перевод по этим реквизитам.",
+        "en": "The payment window has closed. Do not send a new transfer for this invoice.",
+    },
+    "crypto_payment_window_closed": {
+        "ru": (
+            "⏱ <b>Срок оплаты заказа закончился</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
+            "Не отправляйте новый перевод. Если вы оплатили вовремя, бот ещё несколько "
+            "минут проверит финализацию и индексацию TON и выдаст звёзды автоматически."
+        ),
+        "en": (
+            "⏱ <b>This invoice's payment window has closed</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
+            "Do not send a new transfer. If you paid on time, the bot will keep checking "
+            "TON finality/indexing for a few minutes and deliver automatically."
         ),
     },
     "star_rate_crypto": {
@@ -472,9 +526,7 @@ TEXTS: dict[str, dict[str, str]] = {
     },
     "withdraw_rejected_notify": {
         "ru": (
-            "❌ Ваш вывод #{id} отклонён.\n"
-            "Причина: {reason}\n"
-            "Средства возвращены на баланс."
+            "❌ Ваш вывод #{id} отклонён.\n" "Причина: {reason}\n" "Средства возвращены на баланс."
         ),
         "en": (
             "❌ Your withdrawal #{id} was rejected.\n"

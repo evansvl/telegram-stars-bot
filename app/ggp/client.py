@@ -3,7 +3,7 @@
 Endpoints used:
   POST /api/token            (auth; short-lived token, ~15 min, ISO ``expired``)
   POST /api/get_stars_price  (wholesale TON+RUB price of N stars)
-  POST /api/check_balance    (our prepaid balance)
+  POST /api/get_ton_balance  (our prepaid TON balance)
   POST /api/buyStars         (deliver N stars to a @username, spends balance)
 
 The token is cached and auto-refreshed on expiry or a 401. The host may be a
@@ -107,20 +107,12 @@ class GgpClient:
                     if resp.status < 400:
                         return body if isinstance(body, dict) else {"data": body}
                     # An expired token mid-flight: refresh once and retry.
-                    if (
-                        resp.status == 401
-                        and authed
-                        and attempt < _MAX_RETRIES
-                    ):
+                    if resp.status == 401 and authed and attempt < _MAX_RETRIES:
                         # A 401 definitively rejects the call before its side effect,
                         # so refreshing the token is safe even for ``buyStars``.
                         await self._ensure_token(force=True)
                         continue
-                    if (
-                        resp.status in _RETRY_STATUSES
-                        and retry_safe
-                        and attempt < _MAX_RETRIES
-                    ):
+                    if resp.status in _RETRY_STATUSES and retry_safe and attempt < _MAX_RETRIES:
                         await self._sleep_backoff(attempt, resp.status)
                         continue
                     raise GgpApiError(
@@ -157,10 +149,15 @@ class GgpClient:
         data = await self._request("POST", "/api/get_stars_price", json={"quantity": quantity})
         return StarsPrice.from_api(data)
 
-    async def check_balance(self) -> Decimal:
-        """POST /api/check_balance — our prepaid balance."""
-        data = await self._request("POST", "/api/check_balance", json={})
-        raw = data.get("balance", data.get("data"))
+    async def check_ton_balance(self) -> Decimal:
+        """POST /api/get_ton_balance — balance consumed by ``buyStars``.
+
+        This is only an inventory/readiness signal.  A positive provider balance
+        never proves that a buyer paid for a particular order; payment proof comes
+        from the matched, finalized TON transaction stored on that order.
+        """
+        data = await self._request("POST", "/api/get_ton_balance", json={})
+        raw = data.get("balance", data.get("ton_balance", data.get("data")))
         return Decimal(str(raw)) if raw is not None else Decimal("0")
 
     async def buy_stars(self, username: str, quantity: int) -> BuyResult:

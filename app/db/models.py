@@ -15,6 +15,7 @@ from sqlalchemy import (
     Numeric,
     String,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -90,9 +91,18 @@ class Order(Base):
     )
 
     # Payment rail: "wata" (card) or "ggp" (crypto/TON). Crypto orders store the
-    # exact (jittered) TON the buyer must send and the GGP delivery tx id.
+    # exact (jittered) TON the buyer must send, the verified on-chain payment proof,
+    # and the GGP delivery transaction id.
     provider: Mapped[str] = mapped_column(String(8), default="wata", nullable=False)
     ton_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 9), nullable=True)
+    ton_payment_tx_hash: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    ton_payment_lt: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ton_payment_utime: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    payment_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     ggp_tx_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     count: Mapped[int] = mapped_column(nullable=False)
@@ -126,6 +136,23 @@ class Order(Base):
     __table_args__ = (
         Index("ix_orders_order_id", "order_id"),
         Index("ix_orders_buyer_tg_id", "buyer_tg_id"),
+        Index(
+            "uq_orders_verified_ton_amount",
+            "ton_amount",
+            unique=True,
+            postgresql_where=text(
+                "provider = 'ggp' AND payment_expires_at IS NOT NULL " "AND ton_amount IS NOT NULL"
+            ),
+        ),
+        Index(
+            "uq_orders_active_ggp_buyer",
+            "buyer_tg_id",
+            unique=True,
+            postgresql_where=text(
+                "provider = 'ggp' AND status IN ('Pending', 'Review', 'Paid') "
+                "AND buyer_tg_id <> 0"
+            ),
+        ),
     )
 
 

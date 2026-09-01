@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -11,10 +12,12 @@ from unittest.mock import AsyncMock
 import pytest
 from app.bot.handlers import _parse_withdrawal_callback, cb_admin_approve, cb_testpay
 from app.db.models import Order, OrderStatusEnum
+from app.ggp.errors import GgpApiError, GgpNetworkError
 from app.services import (
     OrderService,
     OrderVerificationError,
     ReferralService,
+    _is_definitive_insufficient,
     _verify_wata_order,
 )
 from app.wata.errors import WataNetworkError
@@ -177,7 +180,9 @@ async def test_wata_auto_confirm_failure_is_retryable_and_never_assumed_paid() -
         confirm_order=AsyncMock(side_effect=WataNetworkError("offline")),
     )
     service = OrderService(
-        SimpleNamespace(auto_confirm=True), wata, object()  # type: ignore[arg-type]
+        SimpleNamespace(auto_confirm=True),
+        wata,
+        object(),  # type: ignore[arg-type]
     )
     service._get_local = AsyncMock(return_value=order)  # type: ignore[method-assign]
 
@@ -216,7 +221,9 @@ async def test_wata_auto_confirm_accepts_documented_empty_response_and_locks_row
     )
     monkeypatch.setattr("app.services.OrderRepository", lambda _session: repo)
     service = OrderService(
-        SimpleNamespace(auto_confirm=True), wata, _DbStub()  # type: ignore[arg-type]
+        SimpleNamespace(auto_confirm=True),
+        wata,
+        _DbStub(),  # type: ignore[arg-type]
     )
     service._get_local = AsyncMock(return_value=order)  # type: ignore[method-assign]
 
@@ -278,7 +285,9 @@ def test_wata_response_must_match_immutable_local_order_fields() -> None:
 async def test_simulated_payment_is_disabled_in_production_before_db_access() -> None:
     db = SimpleNamespace(session=AsyncMock(side_effect=AssertionError("DB must not be used")))
     service = OrderService(
-        SimpleNamespace(test_mode=False), object(), db  # type: ignore[arg-type]
+        SimpleNamespace(test_mode=False),
+        object(),
+        db,  # type: ignore[arg-type]
     )
 
     assert await service.simulate_payment("order-1", 123) is None
@@ -367,6 +376,7 @@ async def test_main_bot_admin_callback_preserves_withdrawal_origin_bot() -> None
 @pytest.mark.asyncio
 async def test_unverified_ggp_order_cannot_credit_referral() -> None:
     order = _order(provider="ggp", status=OrderStatusEnum.SUCCESS.value)
+    order.ggp_tx_id = "provider-id-without-ton-proof"
     referral = ReferralService(SimpleNamespace(), object())  # type: ignore[arg-type]
 
     assert await referral.credit_for_order(order) is None
@@ -375,11 +385,12 @@ async def test_unverified_ggp_order_cannot_credit_referral() -> None:
 @pytest.mark.asyncio
 async def test_crypto_paid_callback_cannot_target_another_buyers_order() -> None:
     order = _order(provider="ggp")
-    ggp = SimpleNamespace(check_balance=AsyncMock())
-    service = OrderService(SimpleNamespace(), object(), object(), ggp)  # type: ignore[arg-type]
-    service.oldest_pending_crypto = AsyncMock(  # type: ignore[method-assign]
-        return_value=order
+    ggp = SimpleNamespace(check_ton_balance=AsyncMock(), buy_stars=AsyncMock())
+    scanner = SimpleNamespace(incoming_transfers=AsyncMock())
+    service = OrderService(  # type: ignore[arg-type]
+        SimpleNamespace(), object(), object(), ggp, scanner
     )
+    service._get_local = AsyncMock(return_value=order)  # type: ignore[method-assign]
 
     delivered, outcome = await service.try_deliver_crypto(
         order.order_id, buyer_tg_id=order.buyer_tg_id + 1
@@ -387,14 +398,48 @@ async def test_crypto_paid_callback_cannot_target_another_buyers_order() -> None
 
     assert delivered is None
     assert outcome == "gone"
-    ggp.check_balance.assert_not_awaited()
+    scanner.incoming_transfers.assert_not_awaited()
+    ggp.check_ton_balance.assert_not_awaited()
+    ggp.buy_stars.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_crypto_balance_is_checked_only_after_fifo_claim(
+async def test_positive_provider_balance_never_bypasses_missing_chain_proof() -> None:
+    order = _order(provider="ggp")
+    order.ton_amount = Decimal("1.234000000")
+    ggp = SimpleNamespace(
+        check_ton_balance=AsyncMock(return_value=Decimal("100")),
+        buy_stars=AsyncMock(),
+    )
+    scanner = SimpleNamespace(incoming_transfers=AsyncMock(return_value=[]))
+    service = OrderService(  # type: ignore[arg-type]
+        SimpleNamespace(ggp_deposit_memo="merchant"),
+        object(),
+        object(),
+        ggp,
+        scanner,
+    )
+    service._get_local = AsyncMock(return_value=order)  # type: ignore[method-assign]
+
+    current, outcome = await service.try_deliver_crypto(
+        order.order_id, buyer_tg_id=order.buyer_tg_id
+    )
+
+    assert current is order
+    assert outcome == "payment_pending"
+    scanner.incoming_transfers.assert_awaited_once()
+    ggp.check_ton_balance.assert_not_awaited()
+    ggp.buy_stars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_crypto_balance_is_checked_only_after_verified_fifo_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    order = _order(provider="ggp")
+    order = _order(provider="ggp", status=OrderStatusEnum.REVIEW.value)
+    order.ton_payment_tx_hash = "verified-hash"
+    order.ton_payment_lt = 123
+    order.ton_payment_utime = datetime.now(tz=UTC)
     events: list[str] = []
 
     async def claim(_order_id: str, *, buyer_tg_id: int | None = None) -> Order:
@@ -412,21 +457,34 @@ async def test_crypto_balance_is_checked_only_after_fifo_claim(
         return Decimal("0")
 
     repo = SimpleNamespace(
-        claim_pending_crypto=AsyncMock(side_effect=claim),
+        claim_verified_crypto=AsyncMock(side_effect=claim),
         finish_crypto_claim=AsyncMock(side_effect=finish),
     )
     monkeypatch.setattr("app.services.OrderRepository", lambda _session: repo)
-    ggp = SimpleNamespace(check_balance=AsyncMock(side_effect=balance), buy_stars=AsyncMock())
+    ggp = SimpleNamespace(check_ton_balance=AsyncMock(side_effect=balance), buy_stars=AsyncMock())
     service = OrderService(
-        SimpleNamespace(), object(), _DbStub(), ggp  # type: ignore[arg-type]
+        SimpleNamespace(),
+        object(),
+        _DbStub(),
+        ggp,  # type: ignore[arg-type]
     )
 
     updated = await service.deliver_ggp_order(order.order_id, buyer_tg_id=order.buyer_tg_id)
 
     assert updated is order
-    assert order.status == OrderStatusEnum.PENDING.value
-    assert events == ["claim", "balance", f"finish:{OrderStatusEnum.PENDING.value}"]
+    assert order.status == OrderStatusEnum.REVIEW.value
+    assert events == ["claim", "balance", f"finish:{OrderStatusEnum.REVIEW.value}"]
     ggp.buy_stars.assert_not_awaited()
+
+
+def test_only_definitive_ggp_insufficient_rejection_is_retryable() -> None:
+    assert _is_definitive_insufficient(
+        GgpApiError(status=400, message="На балансе недостаточно средств")
+    )
+    assert not _is_definitive_insufficient(
+        GgpApiError(status=500, message="balance update failed after processing")
+    )
+    assert not _is_definitive_insufficient(GgpNetworkError("timeout after request"))
 
 
 def _order(*, provider: str, status: str = OrderStatusEnum.PENDING.value) -> Order:
@@ -439,6 +497,8 @@ def _order(*, provider: str, status: str = OrderStatusEnum.PENDING.value) -> Ord
         status=status,
         provider=provider,
         partner_earning=Decimal("0"),
+        created_at=datetime.now(tz=UTC),
+        updated_at=datetime.now(tz=UTC),
     )
 
 

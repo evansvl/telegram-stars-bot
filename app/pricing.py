@@ -76,8 +76,8 @@ def apply_markup(base: Decimal, markup_percent: float) -> Decimal:
 def compute_ton_due(ton_cost: Decimal, markup_percent: float, *, step: Decimal) -> Decimal:
     """TON the buyer must send: wholesale TON price + markup, rounded up to ``step``.
 
-    Rounding up to the jitter step (e.g. 0.01 TON) leaves room to nudge the amount
-    into a unique value per pending order (see ``jitter_ton_amount``).
+    Rounding up to the commercial step (e.g. 0.001 TON) protects the quoted margin;
+    ``jitter_ton_amount`` then adds the smallest possible unique invoice suffix.
     """
     desired = apply_markup(ton_cost, markup_percent)
     stepped = (desired / step).quantize(Decimal(1), rounding=ROUND_UP) * step
@@ -85,17 +85,21 @@ def compute_ton_due(ton_cost: Decimal, markup_percent: float, *, step: Decimal) 
 
 
 def jitter_ton_amount(base: Decimal, taken: set[Decimal], *, step: Decimal) -> Decimal:
-    """Pick a unique TON amount near ``base``, spaced by ``step``, avoiding ``taken``.
+    """Pick a permanently unique TON amount at or just above ``base``.
 
     Buyers all pay the same address+comment, so the exact amount is how we tell
-    them apart. Walk outward (base, +step, +2·step, …) to the first free slot.
+    them apart. ``step`` defines the commercial price grid; uniqueness then walks
+    upward one nanoton at a time. This keeps globally reserved invoice amounts from
+    ever being reused without materially changing the quoted price.
     """
+    if step <= 0:
+        raise ValueError("step must be positive")
     base = base.quantize(_NANOTON, rounding=ROUND_UP)
     candidate = base
     bump = 0
     while candidate in taken:
         bump += 1
-        candidate = (base + step * bump).quantize(_NANOTON, rounding=ROUND_UP)
+        candidate = base + _NANOTON * bump
     return candidate
 
 

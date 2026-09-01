@@ -6,11 +6,12 @@
 
 **A ready-made open-source bot and shop template for selling Telegram Stars with
 your own markup.** A user enters the recipient's `@username` and the number of
-stars, pays **by card or SBP**, and the stars are delivered
+stars, pays **by card, SBP, or TON**, and the stars are delivered
 automatically. In short — a ready-to-run script for auto-selling Telegram Stars
 that you deploy on your own server in ~30–40 minutes via the
 [step-by-step guide](#-step-by-step-install-for-beginners). Payments and delivery
-go through **WATA** (card/SBP). The legacy GreenGamePay balance-only path is disabled. The interface is
+go through **WATA** (card/SBP) or **GreenGamePay** (TON). Every TON payment is
+reconciled to a specific on-chain transaction. The interface is
 bilingual — **Russian and English** — with on-the-fly switching.
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -39,10 +40,10 @@ bilingual — **Russian and English** — with on-the-fly switching.
 
 | | Feature | Description |
 |---|---|---|
-| ⭐ | **Sell Telegram Stars** | Buy stars for any @username (from 50 to 50,000) via the WATA Digital Goods API |
+| ⭐ | **Sell Telegram Stars** | Buy stars for any @username (from 50 to 50,000) via WATA or GreenGamePay |
 | 💰 | **Configurable margin** | Markup over the minimum price via `MARKUP_PERCENT`, clamped to +50% |
 | 💳 | **Card / SBP payment** | One-off WATA payment link: bank card or SBP |
-| 💎 | **GGP safely disabled** | Unverified shared-balance delivery cannot be enabled through configuration; transaction-level TON reconciliation is required |
+| 💎 | **TON payment via GGP** | Payment is verified by destination address, exact amount, memo, time, and a unique TON transaction hash |
 | 🔔 | **Payment tracking** | WATA webhook with mandatory RSA signature verification and API status reconciliation |
 | ✅ | **Auto-confirm** | Automatic `confirm` after payment (`AUTO_CONFIRM=true`) — stars ship instantly |
 | 🧾 | **Order history** | The “My orders” button shows the user's orders with statuses |
@@ -86,7 +87,7 @@ This repository is only for those who want to run everything on their own server
 >
 > **Already experienced?** In short: rent a VPS, point a domain at its IP, run
 > `curl -fsSL https://raw.githubusercontent.com/evansvl/telegram-stars-bot/main/scripts/install.sh | bash`,
-> fill in `.env` (`BOT_TOKEN`, `WATA_TOKEN`, `WEBHOOK_HOST`, `ADMIN_IDS`), put Caddy
+> fill in `.env` (`BOT_TOKEN`, one payment rail, `WEBHOOK_HOST`, `ADMIN_IDS`), put Caddy
 > in front of `127.0.0.1:8080`, restart. Details below.
 
 ### What you'll need
@@ -94,7 +95,7 @@ This repository is only for those who want to run everything on their own server
 - A **Telegram** account.
 - A Linux **VPS** — from ~$3/mo (step 3).
 - A **domain** — from ~$2/yr, or a free subdomain (step 4).
-- **WATA** access to accept card payments (step 2).
+- **WATA** access for card payments (step 2) and/or a **GreenGamePay** account for TON.
 
 ---
 
@@ -200,7 +201,8 @@ it replies with your number.
 
 Save in `nano`: **Ctrl+O** → **Enter**, exit: **Ctrl+X**.
 
-> 💎 The legacy GGP balance-only path is disabled — see the explanation below.
+> 💎 For TON, set `GGP_USERNAME`, `GGP_PASSWORD`, and `GGP_TON_ADDRESS`; the rail
+> turns on automatically. Toncenter settings are described below.
 
 ---
 
@@ -250,6 +252,8 @@ That means it works 🎉 (DB migrations run automatically on start).
 
 ### Step 10. Verify and set the WATA webhook
 
+Skip this step for a TON/GGP-only deployment.
+
 1. Open your bot in Telegram and tap **/start** — the menu appears. The
    **“🛠 Admin”** button shows up if your ID is in `ADMIN_IDS`.
 2. In the WATA dashboard, set the **webhook URL**:
@@ -261,35 +265,38 @@ Done — the bot accepts orders and payments. 🚀
 
 ---
 
-### Disabled crypto (TON) payment
+### Crypto (TON) payment
 
-> ⚠️ **Security limitation:** `check_balance` exposes the shared GGP balance but
-> does not bind a specific TON transaction to a specific order. FIFO protects
-> delivery order; it is not proof of payment. Do not enable GGP in production until
-> an incoming TON transaction is reconciled by amount, address, memo, and tx hash.
+> 🔐 **Payment verification:** the shared GGP balance is not treated as proof of
+> payment. The bot scans incoming TON transactions and accepts only a transfer whose
+> destination address, exact amount, memo, and order time window all match. One
+> unique transaction hash can be credited only once, and an issued invoice amount
+> is never reused for a different order.
 
 **Where to register:** create an account with **GreenGamePay** —
 [пополнистим.рф](https://xn--h1aahgceagbyl.xn--p1ai/). After signing up, your
 dashboard gives you a login/password and a **TON deposit address** — put those in
 `.env`.
 
-How it works: the buyer pays TON to your GGP deposit address → your GGP balance grows
-→ the bot sees the funds (`check_balance`) and delivers stars via `buyStars`. Since
-the funds always reach you, delivery is gated **on the balance**, not on scanning the
-chain: the oldest unpaid crypto order ships first (FIFO).
+How it works: the buyer sends the displayed **exact TON amount** to the GGP deposit
+address with the displayed memo → the bot finds and verifies that transaction through
+Toncenter → after successful reconciliation it calls GGP `buyStars`. `get_ton_balance`
+is used only as a readiness check that GGP can fulfil the purchase; a shared-balance
+increase by itself never marks an order paid.
 
-Because of the limitation above, crypto always remains disabled even when
-`GGP_USERNAME`, `GGP_PASSWORD`, and `GGP_TON_ADDRESS` are set. The legacy balance-only
-flow cannot be unlocked through configuration:
+Crypto payment turns on automatically when all three required settings are present:
 
 ```dotenv
 GGP_USERNAME=your-ggp-login
 GGP_PASSWORD=your-ggp-password
 GGP_TON_ADDRESS=ton-deposit-address        # from your GGP dashboard
+GGP_DEPOSIT_MEMO=  # empty = automatically use GGP_USERNAME
+TON_API_BASE=https://toncenter.com/api/v3
+TON_API_KEY=                                # optional
 ```
 
-**Crypto only (no WATA).** This mode is intentionally unavailable. Implement
-transaction-level TON verification before enabling it.
+`TON_API_KEY` is optional. Without one, the public Toncenter endpoint is used at its
+**1 request per second** limit. A TON/GGP-only deployment without WATA is supported.
 
 See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the crypto economics.
 
@@ -320,13 +327,16 @@ land in the repository.
 | `WATA_PUBLIC_KEY_URL` | — | URL of the WATA public key for webhook signature verification |
 | `MARKUP_PERCENT` | — | Markup over `minPrice` in % (card/WATA), result clamped to +50% (default `20`) |
 | `AUTO_CONFIRM` | — | `true` — auto-confirm star delivery after payment |
-| `CRYPTO_MARKUP_PERCENT` | — | Reserved markup for the disabled GGP path |
-| `GGP_USERNAME` / `GGP_PASSWORD` | — | Reserved GreenGamePay credentials; they do not enable balance-only delivery |
+| `CRYPTO_MARKUP_PERCENT` | — | Markup for TON payments (default `10`) |
+| `GGP_USERNAME` / `GGP_PASSWORD` | for crypto | GreenGamePay credentials; together with `GGP_TON_ADDRESS` they enable TON payment |
 | `GGP_BASE_URL` | — | GGP API base (default `пополнистим.рф` in IDNA form) |
 | `GGP_TON_ADDRESS` | for crypto | TON deposit address that funds the GGP balance (from the GreenGamePay dashboard). Required to enable crypto |
-| `GGP_DEPOSIT_MEMO` | — | Payment comment = your GGP login (default `evansvl`) |
-| `TON_POLL_INTERVAL` | — | GGP balance check interval in seconds (default `20`) |
+| `GGP_DEPOSIT_MEMO` | — | Payment comment; when empty it is derived automatically from `GGP_USERNAME` |
+| `TON_API_BASE` | — | Toncenter API v3 used to scan transactions (default `https://toncenter.com/api/v3`) |
+| `TON_API_KEY` | — | Optional Toncenter key; without it the public endpoint is used at 1 RPS |
+| `TON_POLL_INTERVAL` | — | TON scan interval in seconds (default `20`) |
 | `CRYPTO_PAYMENT_TTL_MIN` | — | Validity of a quoted TON amount in minutes (default `30`) |
+| `TON_RECONCILIATION_GRACE_MIN` | — | Short reconciliation window after deadline/cancel, protecting an already-started transfer from block/indexer lag (default `10`) |
 | `ADMIN_IDS` | — | Comma-separated Telegram IDs of admins (for `/stats`) |
 | `DATABASE_URL` | — | PostgreSQL DSN (compose already points it at the `postgres` service) |
 | `REDIS_URL` | — | Redis DSN (compose points it at the `redis` service) |
@@ -358,16 +368,14 @@ minPrice × count  ≤  amount  ≤  minPrice × count × 1.5   (at most +50%)
 Your profit = `amount − price − commission` (the purchase price and WATA commission
 come back in the order-creation response and are stored in the DB as `margin`).
 
-**The disabled legacy path (TON via GGP)** had its own markup and no WATA clamp.
-GGP returns a wholesale `{ton, rub}` price per quantity; the buyer pays
+**TON via GGP** has its own markup and no WATA clamp. GGP returns a wholesale
+`{ton, rub}` price per quantity; the buyer pays
 `ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up. The buyer sends
-TON to your GGP deposit address and taps “✅ I paid”. Delivery is gated **on the shared
-GGP balance**, not on scanning the chain: the bot checks `check_balance`, and as soon as
-there are funds it delivers the oldest unpaid crypto order via GGP `buyStars` (FIFO).
-A background worker also completes orders if the buyer never taps the button. If a
-buyer paid but no stars arrived, the bot tells them to contact **@nnstorecontactbot**.
-This check does not prove who made the deposit; production use requires transaction-level
-TON reconciliation. See [docs/ECONOMICS.md](docs/ECONOMICS.md) for the math.
+TON to the GGP deposit address with the displayed memo. The bot matches the destination,
+exact amount, memo, and transaction time, then atomically reserves the unique tx hash
+for one order; only then does it call GGP `buyStars`. `get_ton_balance` is only a GGP
+readiness check, never proof of payment. See [docs/ECONOMICS.md](docs/ECONOMICS.md)
+for the math.
 
 ---
 
@@ -504,18 +512,18 @@ start), prunes old images and prints the current version (git SHA).
 **How do I make a bot to sell Telegram Stars?**
 This is a ready-made open-source template for exactly that. Deploy it on your own
 server via the [step-by-step guide](#-step-by-step-install-for-beginners): create a
-bot in BotFather, get a WATA token, fill in `.env`, set up HTTPS — and your Stars shop
+bot in BotFather, configure WATA and/or GreenGamePay, fill in `.env`, set up HTTPS — and your shop
 is live. You set the markup yourself (`MARKUP_PERCENT`); stars are delivered automatically.
 
 **Is it a ready-to-run script/template or do I need to write code?**
-It's ready to run: card/SBP payment acceptance, automatic star delivery, a
+It's ready to run: card/SBP or TON payment acceptance, automatic star delivery, a
 referral program, partner bots and an admin panel are already included. You only need a
-server, a domain and tokens (BotFather + WATA). The code is open — tweak it if you want.
+server, a domain, a BotFather token, and credentials for at least one payment rail.
 
 **Can I sell stars for crypto (TON)?**
-No. The legacy GreenGamePay balance-only path is hard-disabled because a shared balance
-does not prove payment for a specific order. Transaction-level TON reconciliation is
-required before it can be enabled.
+Yes. Configure GreenGamePay credentials and the TON deposit address: the bot reconciles
+a specific incoming transaction by destination, exact amount, memo, time, and unique
+tx hash. The shared GGP balance is used only for readiness and never confirms an order.
 
 **Payment went through, but the stars didn't arrive.**
 The bot notifies about payment automatically via the WATA webhook — there is no manual

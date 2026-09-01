@@ -40,9 +40,12 @@ _PRESETS = [50, 100, 250, 500, 1000]
 _WEB_BUYER_ID = 0
 _WEB_BUYER_USERNAME = "web"
 
-_DELIVERED_STATUSES = {OrderStatusEnum.PAID.value, OrderStatusEnum.SUCCESS.value}
-_FAILED_STATUSES = {OrderStatusEnum.FAIL.value, OrderStatusEnum.ERROR.value,
-                    OrderStatusEnum.REFUNDED.value, OrderStatusEnum.EXPIRED.value}
+_FAILED_STATUSES = {
+    OrderStatusEnum.FAIL.value,
+    OrderStatusEnum.ERROR.value,
+    OrderStatusEnum.REFUNDED.value,
+    OrderStatusEnum.EXPIRED.value,
+}
 
 # Per-IP sliding-window rate limiter (single process, in-memory).
 _hits: dict[str, deque[float]] = defaultdict(deque)
@@ -175,9 +178,7 @@ async def _create_card_order(service: OrderService, username: str, count: int) -
         price = await service.get_star_price(username)  # validates the username too
     except WataError as exc:
         logger.info("public card quote failed user=%s: %s", username, exc)
-        return web.json_response(
-            {"error": "wata", "detail": exc.message_key()}, status=400
-        )
+        return web.json_response({"error": "wata", "detail": exc.message_key()}, status=400)
     amount = compute_amount(price.min_price, count, service.markup_percent).amount
     try:
         created = await service.create_order(
@@ -240,7 +241,8 @@ async def _order_status(request: web.Request) -> web.Response:
         {
             "order_id": order.order_id,
             "status": order.status,
-            "delivered": order.status in _DELIVERED_STATUSES,
+            "delivered": order.status == OrderStatusEnum.SUCCESS.value
+            or (order.provider != "ggp" and order.status == OrderStatusEnum.PAID.value),
             "failed": order.status in _FAILED_STATUSES,
         }
     )

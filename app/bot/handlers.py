@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import suppress
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from math import ceil
 from typing import Any
 
 from aiogram import Bot, F, Router
@@ -40,16 +42,25 @@ from app.bot.webhook import (
     telegram_webhook_master_secret,
 )
 from app.config import Settings
-from app.db.models import Withdrawal
+from app.db.models import OrderStatusEnum, Withdrawal
 from app.ggp.errors import GgpError
 from app.pricing import MAX_STARS, MIN_STARS, compute_amount, is_valid_count
 from app.services import OrderService, PartnerService, ReferralService, WithdrawalError
+from app.ton.scanner import TonScannerError
 from app.wata.errors import WataError
 
 logger = logging.getLogger(__name__)
 router = Router(name="main")
 
 _USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+
+
+def _crypto_minutes_remaining(deadline: datetime | None, fallback: int) -> int:
+    if deadline is None:
+        return fallback
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+    return max(0, ceil((deadline - datetime.now(tz=UTC)).total_seconds() / 60))
 
 
 async def _render(
@@ -382,7 +393,8 @@ async def cb_count(
     if value == "custom":
         await state.set_state(BuyStates.waiting_custom_count)
         await _render(
-            call, t("ask_custom_count", lang, min=MIN_STARS, max=MAX_STARS),
+            call,
+            t("ask_custom_count", lang, min=MIN_STARS, max=MAX_STARS),
             keyboards.cancel_button(lang),
         )
         await call.answer()
@@ -523,14 +535,44 @@ async def cb_pay_crypto(
         return
 
     user = call.from_user
-    # One unpaid crypto order at a time: the buyer must pay it, cancel it, or wait
-    # for it to expire before starting another — this keeps the delivery queue clean
-    # and avoids two same-priced orders being satisfied by a single deposit.
+    # One active crypto order at a time. A verified REVIEW/PAID order remains active
+    # until delivery, but must never be shown as payable again.
     existing = await service.pending_crypto_order(user.id)
     if existing is not None:
-        # Re-show the unpaid order's details so they can pay or cancel it.
+        if existing.status != OrderStatusEnum.PENDING.value:
+            await call.answer(t("crypto_payment_verified_waiting", lang), show_alert=True)
+            await _render(
+                call,
+                t(
+                    "crypto_payment_verified",
+                    lang,
+                    count=existing.count,
+                    target=existing.target_username,
+                ),
+                keyboards.crypto_verified_kb(lang, existing.order_id),
+            )
+            await state.clear()
+            return
+        remaining = _crypto_minutes_remaining(
+            existing.payment_expires_at, service.crypto_payment_ttl_min
+        )
+        if remaining == 0:
+            await call.answer(t("crypto_payment_window_closed_alert", lang), show_alert=True)
+            await _render(
+                call,
+                t(
+                    "crypto_payment_window_closed",
+                    lang,
+                    count=existing.count,
+                    target=existing.target_username,
+                ),
+                keyboards.crypto_reconciling_kb(lang, existing.order_id),
+            )
+            await state.clear()
+            return
+        # Re-show only a genuinely unpaid order's exact payment details.
         await call.answer(
-            t("crypto_already_pending", lang, ttl=service.crypto_payment_ttl_min),
+            t("crypto_already_pending", lang, ttl=remaining),
             show_alert=True,
         )
         await _render(
@@ -543,7 +585,7 @@ async def cb_pay_crypto(
                 ton=existing.ton_amount,
                 address=settings.ggp_ton_address,
                 memo=settings.ggp_deposit_memo,
-                ttl=service.crypto_payment_ttl_min,
+                ttl=remaining,
             ),
             keyboards.crypto_instructions_kb(lang, existing.order_id),
         )
@@ -594,7 +636,7 @@ async def cb_crypto_paid(
     partner: PartnerService,
     lang: str,
 ) -> None:
-    """Buyer says they paid: check the GGP balance and deliver if funded."""
+    """Verify the buyer's finalized TON transaction, then attempt GGP delivery."""
     if not call.from_user:
         await call.answer()
         return
@@ -607,7 +649,7 @@ async def cb_crypto_paid(
         delivered, outcome = await service.try_deliver_crypto(
             order_id, buyer_tg_id=call.from_user.id
         )
-    except GgpError:
+    except (GgpError, TonScannerError):
         await call.answer(t("crypto_err_network", lang), show_alert=True)
         return
     if outcome == "delivered" and delivered is not None:
@@ -630,8 +672,38 @@ async def cb_crypto_paid(
             success=False,
             notify_key="crypto_failed_contact",
         )
-    elif outcome != "gone":
-        await call.answer(t("crypto_not_funded", lang), show_alert=True)
+    elif outcome == "provider_pending":
+        if delivered is not None:
+            await _render(
+                call,
+                t(
+                    "crypto_payment_verified",
+                    lang,
+                    count=delivered.count,
+                    target=delivered.target_username,
+                ),
+                keyboards.crypto_verified_kb(lang, delivered.order_id),
+            )
+        await call.answer(t("crypto_payment_verified_waiting", lang), show_alert=True)
+    elif outcome == "payment_pending":
+        remaining = _crypto_minutes_remaining(
+            delivered.payment_expires_at if delivered is not None else None,
+            service.crypto_payment_ttl_min,
+        )
+        if remaining == 0 and delivered is not None:
+            await _render(
+                call,
+                t(
+                    "crypto_payment_window_closed",
+                    lang,
+                    count=delivered.count,
+                    target=delivered.target_username,
+                ),
+                keyboards.crypto_reconciling_kb(lang, delivered.order_id),
+            )
+            await call.answer(t("crypto_payment_window_closed_alert", lang), show_alert=True)
+        else:
+            await call.answer(t("crypto_not_funded", lang), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("crypto:cancel:"))
@@ -649,7 +721,10 @@ async def cb_crypto_cancel(
         return
     order_id = (call.data or "").split(":")[-1]
     cancelled = await service.cancel_crypto_order(order_id, call.from_user.id)
-    await call.answer(t("crypto_cancelled" if cancelled else "crypto_cancel_gone", lang))
+    await call.answer(
+        t("crypto_cancelled" if cancelled else "crypto_cancel_gone", lang),
+        show_alert=cancelled,
+    )
     text, markup = await _home_view(call, service, partner, settings, lang, main_bot)
     await _render(call, text, markup)
 
@@ -970,9 +1045,7 @@ async def cb_withdraw_method(call: CallbackQuery, state: FSMContext, lang: str) 
     await state.update_data(method=method)
     await state.set_state(WithdrawStates.entering_destination)
     key = (
-        "withdraw_ask_destination_crypto"
-        if method == "crypto"
-        else "withdraw_ask_destination_sbp"
+        "withdraw_ask_destination_crypto" if method == "crypto" else "withdraw_ask_destination_sbp"
     )
     await _render(call, t(key, lang), keyboards.withdraw_cancel(lang))
     await call.answer()
@@ -1377,9 +1450,7 @@ def _is_admin_message(message: Message, settings: Settings, main_bot: Bot) -> bo
 
 
 @router.callback_query(F.data == "admin:show")
-async def cb_admin(
-    call: CallbackQuery, settings: Settings, main_bot: Bot, lang: str
-) -> None:
+async def cb_admin(call: CallbackQuery, settings: Settings, main_bot: Bot, lang: str) -> None:
     if not _is_admin_call(call, settings, main_bot):
         await call.answer(t("admin_only", lang), show_alert=True)
         return
@@ -1408,10 +1479,18 @@ async def cb_admin_stats(
     text = t(
         "admin_stats",
         lang,
-        d1_stars=d1["stars"], d1_orders=d1["orders"], d1_revenue=d1["revenue"],
-        d3_stars=d3["stars"], d3_orders=d3["orders"], d3_revenue=d3["revenue"],
-        d7_stars=d7["stars"], d7_orders=d7["orders"], d7_revenue=d7["revenue"],
-        d30_stars=d30["stars"], d30_orders=d30["orders"], d30_revenue=d30["revenue"],
+        d1_stars=d1["stars"],
+        d1_orders=d1["orders"],
+        d1_revenue=d1["revenue"],
+        d3_stars=d3["stars"],
+        d3_orders=d3["orders"],
+        d3_revenue=d3["revenue"],
+        d7_stars=d7["stars"],
+        d7_orders=d7["orders"],
+        d7_revenue=d7["revenue"],
+        d30_stars=d30["stars"],
+        d30_orders=d30["orders"],
+        d30_revenue=d30["revenue"],
         d30_margin=d30["margin"],
         users=users,
         ref_earned=ref_earned,
@@ -1442,8 +1521,9 @@ async def cb_admin_topup(
 ADMIN_USERS_PAGE_SIZE = 6
 
 
-async def _show_users_page(event: Message | CallbackQuery, service: OrderService, lang: str,
-                          page: int) -> None:
+async def _show_users_page(
+    event: Message | CallbackQuery, service: OrderService, lang: str, page: int
+) -> None:
     """Render one page of the user browser (fetches one extra to detect a next page)."""
     page = max(0, page)
     rows = await service.list_users_page(page * ADMIN_USERS_PAGE_SIZE, ADMIN_USERS_PAGE_SIZE + 1)

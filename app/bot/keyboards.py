@@ -113,6 +113,30 @@ def crypto_instructions_kb(lang: str, order_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def crypto_verified_kb(lang: str, order_id: str) -> InlineKeyboardMarkup:
+    """Verified TON order: delivery recheck, support and menu (never pay/cancel)."""
+    settings = get_settings()
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_crypto_recheck", lang), callback_data=f"crypto:paid:{order_id}")
+    if settings.support_url:
+        builder.button(text=t("btn_support", lang), url=settings.support_url)
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def crypto_reconciling_kb(lang: str, order_id: str) -> InlineKeyboardMarkup:
+    """Closed TON invoice: scan again, contact support, or return to menu."""
+    settings = get_settings()
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("btn_check", lang), callback_data=f"crypto:paid:{order_id}")
+    if settings.support_url:
+        builder.button(text=t("btn_support", lang), url=settings.support_url)
+    builder.button(text=t("btn_menu", lang), callback_data="menu:show")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def payment_link(url: str, order_id: str, lang: str) -> InlineKeyboardMarkup:
     # Open the payment page as a Telegram Mini App (in-app webview, no external
     # browser). Falls back to a plain URL button if the link isn't HTTPS, since

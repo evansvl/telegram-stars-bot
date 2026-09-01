@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -33,6 +33,7 @@ from app.db.repositories import (
 )
 from app.db.session import Database
 from app.ggp.client import GgpClient
+from app.ggp.errors import GgpApiError
 from app.pricing import (
     PriceQuote,
     compute_amount,
@@ -41,6 +42,7 @@ from app.pricing import (
     estimated_margin,
     jitter_ton_amount,
 )
+from app.ton.scanner import TonScanner
 from app.wata.client import WataClient
 from app.wata.models import OrderStatus, StarPrice
 
@@ -180,18 +182,12 @@ class CreatedCryptoOrder:
     ttl_min: int
 
 
-# Keywords that mark a GGP buyStars failure as "not enough balance yet" (retryable)
-# rather than a permanent error (e.g. invalid username).
-_INSUFFICIENT_HINTS = (
-    "баланс",
-    "недостаточно",
-    "средств",
-    "попол",
-    "insufficient",
-    "balance",
-    "not enough",
-    "no funds",
-)
+_DEFINITIVE_INSUFFICIENT_MESSAGES = {
+    # Observed documented business rejection from GGP. Keep this exact: broad
+    # free-text matching could retry an ambiguous 5xx after stars were delivered.
+    "на балансе недостаточно средств",
+    "insufficient funds",
+}
 
 # GGP calls time out well below this.  A claim older than the threshold is
 # ambiguous (the provider may have delivered before our process died), so it is
@@ -199,10 +195,12 @@ _INSUFFICIENT_HINTS = (
 _STALE_GGP_CLAIM_MINUTES = 10
 
 
-def _looks_insufficient(exc: Exception) -> bool:
-    message = getattr(exc, "message", "") or str(exc)
-    lowered = message.lower()
-    return any(hint in lowered for hint in _INSUFFICIENT_HINTS)
+def _is_definitive_insufficient(exc: Exception) -> bool:
+    return (
+        isinstance(exc, GgpApiError)
+        and exc.status == 400
+        and exc.message.strip().casefold() in _DEFINITIVE_INSUFFICIENT_MESSAGES
+    )
 
 
 class OrderService:
@@ -212,10 +210,12 @@ class OrderService:
         wata: WataClient,
         db: Database,
         ggp: GgpClient | None = None,
+        ton_scanner: TonScanner | None = None,
     ) -> None:
         self._settings = settings
         self._wata = wata
         self._ggp = ggp
+        self._ton_scanner = ton_scanner
         self._db = db
         self._lang_cache: dict[int, str] = {}
         self._banned_cache: dict[int, bool] = {}
@@ -356,8 +356,8 @@ class OrderService:
 
     @property
     def crypto_enabled(self) -> bool:
-        """Crypto (TON/GGP) rail is offered. The GGP client is built iff configured."""
-        return self._ggp is not None
+        """Crypto is offered only with delivery and on-chain verification clients."""
+        return self._ggp is not None and self._ton_scanner is not None
 
     @property
     def admin_ids(self) -> list[int]:
@@ -539,13 +539,17 @@ class OrderService:
     ) -> CreatedCryptoOrder:
         """Persist a PENDING crypto order with a unique (jittered) TON amount.
 
-        A partial unique index (migration 0008) hard-guarantees no two PENDING crypto
-        orders share a TON amount — under a rare concurrent collision the insert fails,
-        so we re-read the taken amounts and retry with the next free slot.
+        Issued verified-flow amounts are permanently reserved, and legacy amounts
+        are included when choosing the smallest free nanoton suffix. The immutable
+        payment deadline ensures a transfer can only be bound to the displayed
+        window plus the bounded reconciliation grace.
         """
         order_id = uuid.uuid4().hex
         step = self._settings.ton_amount_jitter_step
         ton_amount = ton_due
+        payment_expires_at = datetime.now(tz=UTC) + timedelta(
+            minutes=self._settings.crypto_payment_ttl_min
+        )
         for attempt in range(6):
             try:
                 async with self._db.session() as session:
@@ -563,6 +567,7 @@ class OrderService:
                         status=OrderStatusEnum.PENDING.value,
                         provider="ggp",
                         ton_amount=ton_amount,
+                        payment_expires_at=payment_expires_at,
                         partner_owner_tg_id=partner_owner_tg_id,
                         partner_earning=partner_earning,
                         bot_id=bot_id,
@@ -582,9 +587,7 @@ class OrderService:
                 )
         else:
             raise RuntimeError("could not assign a unique TON amount after retries")
-        logger.info(
-            "crypto order created order_id=%s count=%d ton=%s", order_id, count, ton_amount
-        )
+        logger.info("crypto order created order_id=%s count=%d ton=%s", order_id, count, ton_amount)
         return CreatedCryptoOrder(
             order_id=order_id,
             ton_amount=ton_amount,
@@ -606,7 +609,7 @@ class OrderService:
             return await OrderRepository(session).pending_crypto_order(buyer_tg_id)
 
     async def cancel_crypto_order(self, order_id: str, buyer_tg_id: int) -> bool:
-        """Buyer-cancel their own pending crypto order (frees the amount + slot)."""
+        """Close a pending invoice while reconciling any already-broadcast TON."""
         async with self._db.session() as session:
             return await OrderRepository(session).cancel_pending_crypto(order_id, buyer_tg_id)
 
@@ -614,91 +617,170 @@ class OrderService:
         """Auto-cancel crypto orders unpaid past the TTL. Returns how many."""
         async with self._db.session() as session:
             return await OrderRepository(session).expire_stale_crypto(
-                self._settings.crypto_payment_ttl_min
+                self._settings.ton_reconciliation_grace_min
             )
 
     async def fail_stale_crypto_claims(self) -> int:
         """Quarantine abandoned in-flight GGP deliveries for manual reconciliation."""
         async with self._db.session() as session:
-            return await OrderRepository(session).fail_stale_crypto_claims(
-                _STALE_GGP_CLAIM_MINUTES
-            )
+            return await OrderRepository(session).fail_stale_crypto_claims(_STALE_GGP_CLAIM_MINUTES)
 
-    async def oldest_pending_crypto(self) -> Order | None:
-        """The oldest still-unpaid crypto order (FIFO delivery target)."""
+    async def oldest_verified_crypto(self) -> Order | None:
+        """The oldest on-chain-verified crypto order awaiting GGP delivery."""
         async with self._db.session() as session:
-            return await OrderRepository(session).oldest_pending_crypto()
+            return await OrderRepository(session).oldest_verified_crypto()
+
+    async def scan_crypto_payments(
+        self,
+        *,
+        since_utime: int | None = None,
+        order_id: str | None = None,
+        ton_amount: Decimal | None = None,
+    ) -> list[Order]:
+        """Bind finalized TON transfers to exact pending orders.
+
+        The scanner already rejects non-final, bounced, emulated, aborted and
+        wrong-account transactions.  Here we additionally require the configured
+        GGP memo; the repository atomically enforces exact amount, payment window,
+        provider/status and one-time transaction-hash use.
+
+        Scanner failures deliberately propagate.  The worker therefore does not
+        expire orders during an indexing outage, avoiding a payment being missed at
+        the edge of its deadline.
+        """
+        assert self._ton_scanner is not None, "TON scanner not configured"
+
+        if since_utime is None:
+            async with self._db.session() as session:
+                earliest = await OrderRepository(session).oldest_pending_crypto_created_at()
+            if earliest is None:
+                return []
+            since_utime = max(0, int(earliest.timestamp()))
+
+        transfers = await self._ton_scanner.incoming_transfers(since_utime=max(0, since_utime))
+        matched: list[Order] = []
+        for transfer in transfers:
+            # The comment is a provider account identifier.  It is intentionally
+            # exact and case-sensitive: normalising it could credit another account.
+            if transfer.comment != self._settings.ggp_deposit_memo:
+                continue
+            if ton_amount is not None and transfer.value_ton != ton_amount:
+                continue
+            tx_utime = datetime.fromtimestamp(transfer.utime, tz=UTC)
+            async with self._db.session() as session:
+                match_kwargs: dict[str, Any] = {
+                    "ton_amount": transfer.value_ton,
+                    "tx_hash": transfer.hash,
+                    "tx_lt": transfer.lt,
+                    "tx_utime": tx_utime,
+                    "reconciliation_grace_minutes": (self._settings.ton_reconciliation_grace_min),
+                }
+                if order_id is not None:
+                    match_kwargs["order_id"] = order_id
+                order = await OrderRepository(session).match_pending_crypto_payment(**match_kwargs)
+            if order is not None:
+                matched.append(order)
+                logger.info(
+                    "verified TON payment order_id=%s tx=%s lt=%s",
+                    order.order_id,
+                    transfer.hash,
+                    transfer.lt,
+                )
+        return matched
 
     async def try_deliver_crypto(
         self, order_id: str, *, buyer_tg_id: int | None = None
     ) -> tuple[Order | None, str]:
-        """Deliver a crypto order if the GGP balance covers it.
+        """Verify a buyer's TON payment, then deliver only a verified order.
 
-        The operator always receives the TON, so we don't scan the chain: we check
-        the GGP balance and, if there are funds, run buyStars. Returns
-        ``(order, outcome)`` where outcome is one of ``delivered`` / ``failed``
-        (permanent) / ``not_funded`` (retryable) / ``gone``.
+        Outcomes are ``delivered``, ``failed``, ``payment_pending`` (no matching
+        finalized transfer), ``provider_pending`` (payment is verified but GGP is
+        not ready / another verified order is in flight), and ``gone``.
         """
-        assert self._ggp is not None, "crypto rail not configured"
-        if buyer_tg_id is not None:
-            oldest = await self.oldest_pending_crypto()
-            if (
-                oldest is None
-                or oldest.order_id != order_id
-                or oldest.buyer_tg_id != buyer_tg_id
-            ):
+        assert self._ggp is not None and self._ton_scanner is not None, "crypto rail not configured"
+        local = await self._get_local(order_id)
+        if (
+            local is None
+            or local.provider != "ggp"
+            or (buyer_tg_id is not None and local.buyer_tg_id != buyer_tg_id)
+        ):
+            return None, "gone"
+
+        if local.status == OrderStatusEnum.PENDING.value:
+            if local.ton_amount is None:
+                return local, "gone"
+            await self.scan_crypto_payments(
+                since_utime=max(0, int(local.created_at.timestamp())),
+                order_id=local.order_id,
+                ton_amount=local.ton_amount,
+            )
+            local = await self._get_local(order_id)
+            if local is None:
                 return None, "gone"
+        if local.status == OrderStatusEnum.PENDING.value:
+            return local, "payment_pending"
+        if local.status == OrderStatusEnum.PAID.value:
+            return local, "provider_pending"
+        if local.status != OrderStatusEnum.REVIEW.value:
+            return local, "gone"
+
         order = await self.deliver_ggp_order(order_id, buyer_tg_id=buyer_tg_id)
         if order is None:
-            return None, "gone"
+            # A concurrent worker or an earlier verified FIFO order may currently
+            # own the serialized GGP claim.  Do not misreport a verified payment as
+            # absent; refresh its state and keep it in the provider queue.
+            refreshed = await self._get_local(order_id)
+            if refreshed is not None and refreshed.status in {
+                OrderStatusEnum.REVIEW.value,
+                OrderStatusEnum.PAID.value,
+            }:
+                return refreshed, "provider_pending"
+            return refreshed, "gone"
         if order.status == OrderStatusEnum.SUCCESS.value:
             return order, "delivered"
         if order.status == OrderStatusEnum.ERROR.value:
             return order, "failed"
-        return order, "not_funded"  # reverted to PENDING (funds not enough yet)
+        return order, "provider_pending"
 
     async def deliver_ggp_order(
         self, order_id: str, *, buyer_tg_id: int | None = None
     ) -> Order | None:
-        """Claim a paid crypto order and deliver via GGP buyStars.
+        """Claim an on-chain-verified order and deliver via GGP ``buyStars``.
 
-        Idempotent: claims PENDING -> PAID first so a concurrent poll tick / button
-        press can't double-deliver. On a buyStars failure the order is reverted to
-        PENDING when it looks like insufficient balance (so it can be retried once
-        the deposit lands), otherwise marked ERROR (a real, permanent failure, e.g.
-        an invalid username — which also unblocks FIFO delivery). Returns the order
-        with its final status, or None if already claimed/unknown.
+        REVIEW proves the buyer payment.  The atomic FIFO claim moves REVIEW ->
+        PAID before the non-idempotent provider call, preventing double delivery.
+        Insufficient provider inventory releases PAID -> REVIEW without discarding
+        the stored TON proof; permanent failures become ERROR.
         """
         assert self._ggp is not None, "crypto rail not configured"
         async with self._db.session() as session:
             repo = OrderRepository(session)
-            order = await repo.claim_pending_crypto(order_id, buyer_tg_id=buyer_tg_id)
+            order = await repo.claim_verified_crypto(order_id, buyer_tg_id=buyer_tg_id)
             if order is None:
                 return None
             target, count = order.target_username, order.count
 
-        # Check the shared provider balance only after the global FIFO claim.  This
-        # prevents two different pending orders from concurrently consuming the
-        # same newly-arrived balance.
+        # This balance is only a provider-readiness check.  It cannot prove who paid;
+        # the immutable on-chain proof was required before the claim above.
         try:
-            balance = await self._ggp.check_balance()
+            balance = await self._ggp.check_ton_balance()
         except asyncio.CancelledError:
             # Balance lookup has no side effect, so this claim is safe to release.
             async with self._db.session() as session:
                 await OrderRepository(session).finish_crypto_claim(
-                    order_id, status=OrderStatusEnum.PENDING.value
+                    order_id, status=OrderStatusEnum.REVIEW.value
                 )
             raise
         except Exception:
             async with self._db.session() as session:
                 await OrderRepository(session).finish_crypto_claim(
-                    order_id, status=OrderStatusEnum.PENDING.value
+                    order_id, status=OrderStatusEnum.REVIEW.value
                 )
             raise
         if balance <= 0:
             async with self._db.session() as session:
                 return await OrderRepository(session).finish_crypto_claim(
-                    order_id, status=OrderStatusEnum.PENDING.value
+                    order_id, status=OrderStatusEnum.REVIEW.value
                 )
 
         try:
@@ -713,12 +795,13 @@ class OrderService:
             )
             raise
         except Exception as exc:
-            retryable = _looks_insufficient(exc)
-            new_status = (
-                OrderStatusEnum.PENDING.value if retryable else OrderStatusEnum.ERROR.value
-            )
+            retryable = _is_definitive_insufficient(exc)
+            new_status = OrderStatusEnum.REVIEW.value if retryable else OrderStatusEnum.ERROR.value
             logger.warning(
-                "buyStars failed order_id=%s retryable=%s: %s", order_id, retryable, exc
+                "buyStars failed order_id=%s definitive_insufficient=%s: %s",
+                order_id,
+                retryable,
+                exc,
             )
             async with self._db.session() as session:
                 return await OrderRepository(session).finish_crypto_claim(
@@ -765,9 +848,7 @@ class OrderService:
             try:
                 confirmed = await self._wata.confirm_order(order_id)
                 if confirmed.order_id != order_id:
-                    raise OrderVerificationError(
-                        f"WATA confirm id mismatch for order {order_id}"
-                    )
+                    raise OrderVerificationError(f"WATA confirm id mismatch for order {order_id}")
                 # WATA documents the successful POST as Review -> Paid but does not
                 # guarantee a response payload.  A successful empty response is
                 # therefore authoritative Paid; a returned status is still parsed
@@ -862,6 +943,7 @@ class OrderService:
 
 # ── Referral program ─────────────────────────────────────────────
 
+
 class WithdrawalError(Exception):
     """Raised when a withdrawal request fails validation; ``key`` is an i18n key."""
 
@@ -913,7 +995,11 @@ class ReferralService:
             }:
                 return None
         elif order.provider == "ggp":
-            if order.status != OrderStatusEnum.SUCCESS.value or not order.ggp_tx_id:
+            if (
+                order.status != OrderStatusEnum.SUCCESS.value
+                or not order.ton_payment_tx_hash
+                or not order.ggp_tx_id
+            ):
                 logger.warning(
                     "refusing to credit unverified GGP order order_id=%s", order.order_id
                 )

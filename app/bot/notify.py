@@ -22,10 +22,60 @@ from app.services import OrderService, PartnerService, ReferralService
 logger = logging.getLogger(__name__)
 
 
+async def notify_crypto_payment_verified(
+    *,
+    bot: Bot,
+    service: OrderService,
+    partner: PartnerService,
+    order: Order,
+) -> None:
+    """Replace payment instructions once a TON transfer is matched on-chain."""
+    if order.buyer_tg_id == 0:  # public website orders have no Telegram chat
+        return
+    lang = await service.get_user_language(order.buyer_tg_id)
+    target_bot = bot
+    spawned = False
+    if order.bot_id and order.bot_id != bot.id:
+        pbot = await partner.get_bot(order.bot_id)
+        if pbot:
+            target_bot = Bot(
+                pbot.token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            spawned = True
+    text = t(
+        "crypto_payment_verified",
+        lang,
+        count=order.count,
+        target=order.target_username,
+    )
+    markup = keyboards.crypto_verified_kb(lang, order.order_id)
+    try:
+        if order.chat_id and order.message_id:
+            try:
+                await target_bot.edit_message_text(
+                    text,
+                    chat_id=order.chat_id,
+                    message_id=order.message_id,
+                    reply_markup=markup,
+                )
+                return
+            except Exception:
+                logger.debug("could not replace crypto instructions order_id=%s", order.order_id)
+        await target_bot.send_message(order.buyer_tg_id, text, reply_markup=markup)
+    except Exception:
+        logger.exception("failed to notify verified TON buyer tg_id=%s", order.buyer_tg_id)
+    finally:
+        if spawned:
+            await target_bot.session.close()
+
+
 async def _notify_admins_purchase(bot: Bot, service: OrderService, order: Order) -> None:
     """Tell every admin about a completed purchase (once, on delivery)."""
-    buyer = f"@{order.buyer.username}" if order.buyer and order.buyer.username else str(
-        order.buyer_tg_id
+    buyer = (
+        f"@{order.buyer.username}"
+        if order.buyer and order.buyer.username
+        else str(order.buyer_tg_id)
     )
     for admin_id in service.admin_ids:
         if admin_id == order.buyer_tg_id:

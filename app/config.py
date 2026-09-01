@@ -36,9 +36,8 @@ class Settings(BaseSettings):
     auto_confirm: bool = True
 
     # ── Crypto rail: TON via GreenGamePay ────────────────────────
-    # The legacy balance-only rail is permanently disabled (see crypto_enabled).
-    # Credentials are retained only for a future transaction-verified implementation.
-    # Do not re-enable it until a deposit is bound to one order by transaction hash.
+    # Enabled automatically when the complete GGP configuration is present. Incoming
+    # deposits are verified on-chain before GGP is asked to deliver the stars.
     crypto_markup_percent: float = 10.0
     # GreenGamePay credentials/host (secrets via env only, never committed).
     ggp_username: str = ""
@@ -47,16 +46,25 @@ class Settings(BaseSettings):
     # The TON deposit address buyers send to, and the comment that credits our
     # GGP balance (the operator login). Shown to the buyer as payment details.
     ggp_ton_address: str = ""
-    ggp_deposit_memo: str = "evansvl"
-    # How often (seconds) the background worker checks the GGP balance and delivers
-    # pending crypto orders (oldest first).
+    # Empty means "use GGP_USERNAME", preventing a copied example value from
+    # crediting somebody else's provider account. Explicit custom memos remain
+    # supported for accounts whose GGP dashboard supplies a different value.
+    ggp_deposit_memo: str = ""
+    # Toncenter v3 is used to bind one incoming transaction to one crypto order.
+    # The API key is optional; without it the public endpoint is limited to 1 RPS.
+    ton_api_base: str = "https://toncenter.com/api/v3"
+    ton_api_key: str = ""
+    # How often (seconds) the background worker scans TON for pending crypto orders.
     ton_poll_interval: int = 20
+    # Keep matching for a short bounded window after the visible deadline/cancel
+    # action. This absorbs wallet broadcast -> block/indexer lag without reusing an
+    # invoice amount for another order.
+    ton_reconciliation_grace_min: int = 10
     # Buyers get this long to pay a crypto order; after it, the order is auto-cancelled
     # (frees its TON amount and the buyer's one-pending-order slot). Shown to the buyer.
     crypto_payment_ttl_min: int = 60
-    # Each pending crypto order gets a unique TON amount, spaced by this step. Fine
-    # granularity (0.001 TON) keeps amounts close to the real price and gives plenty
-    # of distinct slots, so amounts look like 0.982, 0.983, … rather than round 0.01s.
+    # Commercial TON price grid. Invoice uniqueness adds only 1 nanoton above this
+    # rounded base, and issued amounts are never reused (including after expiry).
     ton_amount_jitter_step: Decimal = Decimal("0.001")
 
     # Test mode: skip WATA entirely. Orders get a "mark as paid" button instead of
@@ -80,9 +88,7 @@ class Settings(BaseSettings):
     public_api_allowed_origins_raw: str = Field(
         default="", validation_alias="public_api_allowed_origins"
     )
-    public_api_allowed_ips_raw: str = Field(
-        default="", validation_alias="public_api_allowed_ips"
-    )
+    public_api_allowed_ips_raw: str = Field(default="", validation_alias="public_api_allowed_ips")
     public_api_rate_limit: int = 20  # max requests per client IP per minute
 
     # Infrastructure
@@ -133,16 +139,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_rails(self) -> Settings:
-        """Require the verified WATA rail while legacy GGP remains disabled."""
-        if not self.wata_enabled:
-            crypto_hint = (
-                " (GGP credentials are present, but balance-only delivery is blocked; "
-                "use transaction-level TON verification before enabling it)"
-                if self.ggp_configured
-                else ""
-            )
+        """Require at least one configured payment rail."""
+        if self.ggp_configured and not self.ggp_deposit_memo.strip():
+            self.ggp_deposit_memo = self.ggp_username.strip()
+        if not self.wata_enabled and not self.crypto_enabled:
             raise ValueError(
-                f"no safe payment rail configured: set WATA_TOKEN (card){crypto_hint}"
+                "no payment rail configured: set WATA_TOKEN (card) or complete "
+                "GGP_USERNAME, GGP_PASSWORD, and GGP_TON_ADDRESS (TON)"
             )
         return self
 
@@ -153,12 +156,12 @@ class Settings(BaseSettings):
 
     @property
     def crypto_enabled(self) -> bool:
-        """The unverified shared-balance GGP rail is permanently disabled."""
-        return False
+        """Verified TON rail is on when all required GGP settings are configured."""
+        return self.ggp_configured
 
     @property
     def ggp_configured(self) -> bool:
-        """Whether all GGP credentials are present, independent of the safety gate."""
+        """Whether all credentials required by the TON/GGP rail are present."""
         return bool(self.ggp_username and self.ggp_password and self.ggp_ton_address)
 
     @property

@@ -41,6 +41,7 @@ from app.ggp.client import GgpClient
 from app.logging_config import setup_logging
 from app.services import OrderService, PartnerService, ReferralService
 from app.ton.poller import CryptoDeliveryWorker
+from app.ton.scanner import TonScanner
 from app.wata.client import WataClient
 from app.wata.signature import SignatureVerifier
 from app.webhook.server import build_webhook_app
@@ -93,18 +94,21 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     wata = WataClient(settings.wata_base_url, settings.wata_token, session)
-    # Crypto (TON via GreenGamePay) is an independent optional rail, on when the
-    # GGP credentials + deposit address are configured.
+    # Crypto (TON via GreenGamePay) is an independent optional rail. Incoming
+    # payments are verified through Toncenter before any GGP delivery is allowed.
     ggp: GgpClient | None = None
+    ton_scanner: TonScanner | None = None
     if settings.crypto_enabled:
         ggp = GgpClient(
             settings.ggp_base_url, settings.ggp_username, settings.ggp_password, session
         )
-    elif settings.ggp_configured:
-        logger.warning(
-            "GGP credentials found, but unsafe balance-only delivery is disabled"
+        ton_scanner = TonScanner(
+            settings.ton_api_base,
+            settings.ton_api_key,
+            settings.ggp_ton_address,
+            session,
         )
-    service = OrderService(settings, wata, db, ggp)
+    service = OrderService(settings, wata, db, ggp, ton_scanner)
     referral = ReferralService(settings, db)
     partner = PartnerService(settings, db)
     verifier = SignatureVerifier(settings.wata_public_key_url, session)
@@ -186,9 +190,9 @@ async def main() -> None:
         finally:
             await child.session.close()
 
-    # Crypto rail: deliver pending crypto orders once the GGP balance covers them.
+    # Crypto rail: verify finalized TON payments, then deliver matched orders.
     worker_task: asyncio.Task[None] | None = None
-    if ggp:
+    if service.crypto_enabled:
         worker = CryptoDeliveryWorker(
             settings=settings,
             service=service,
@@ -197,7 +201,7 @@ async def main() -> None:
             bot=bot,
         )
         worker_task = asyncio.create_task(worker.run())
-        logger.info("crypto rail enabled: delivering on GGP balance (buyStars)")
+        logger.info("crypto rail enabled: verified TON payments + GGP buyStars")
 
     # Warm the displayed star-rate caches immediately and keep them warm in the
     # background, so /start never blocks on a slow WATA/GGP call.
