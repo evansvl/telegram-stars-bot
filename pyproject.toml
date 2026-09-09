@@ -1,6 +1,6 @@
 [project]
 name = "telegram-stars-bot"
-version = "0.1.0"
+version = "1.2.2"
 description = "Telegram bot for selling Telegram Stars via the WATA Digital Goods API"
 requires-python = ">=3.12"
 readme = "README.md"

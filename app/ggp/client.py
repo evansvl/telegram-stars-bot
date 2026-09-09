@@ -2,7 +2,7 @@
 
 Endpoints used:
   POST /api/token            (auth; short-lived token, ~15 min, ISO ``expired``)
-  POST /api/get_stars_price  (wholesale TON+RUB price of N stars)
+  POST /api/get_stars_price  (USD price under the legacy "ton" key, plus raw RUB)
   POST /api/get_ton_balance  (our prepaid TON balance)
   POST /api/buyStars         (deliver N stars to a @username, spends balance)
 
@@ -145,9 +145,12 @@ class GgpClient:
     # ── Public API ───────────────────────────────────────────────
 
     async def get_stars_price(self, quantity: int) -> StarsPrice:
-        """POST /api/get_stars_price — wholesale TON+RUB price of ``quantity`` stars."""
+        """Read a USD quote: GGP still serializes the USD amount under ``ton``."""
         data = await self._request("POST", "/api/get_stars_price", json={"quantity": quantity})
-        return StarsPrice.from_api(data)
+        try:
+            return StarsPrice.from_api(data)
+        except (ValueError, ArithmeticError) as exc:
+            raise GgpApiError(status=502, message="invalid GGP Stars quote") from exc
 
     async def check_ton_balance(self) -> Decimal:
         """POST /api/get_ton_balance — balance consumed by ``buyStars``.

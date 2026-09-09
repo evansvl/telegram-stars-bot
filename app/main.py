@@ -40,7 +40,9 @@ from app.db.session import Database
 from app.ggp.client import GgpClient
 from app.logging_config import setup_logging
 from app.services import OrderService, PartnerService, ReferralService
+from app.ton.fragment_rate import FragmentTonRate
 from app.ton.poller import CryptoDeliveryWorker
+from app.ton.rates import TonRates
 from app.ton.scanner import TonScanner
 from app.wata.client import WataClient
 from app.wata.signature import SignatureVerifier
@@ -54,9 +56,8 @@ def _telegram_secret(settings: Settings) -> str:
     return telegram_webhook_master_secret(settings)
 
 
-# How often the background task tops up the displayed star-rate caches (the values
-# themselves are considered fresh for ~1h; this loop also retries a failed first fetch).
-_RATE_REFRESH_INTERVAL = 900
+# Check caches every minute; each source enforces its own refresh interval.
+_RATE_REFRESH_INTERVAL = 60
 
 
 async def _refresh_rates_loop(service: OrderService) -> None:
@@ -108,7 +109,9 @@ async def main() -> None:
             settings.ggp_ton_address,
             session,
         )
-    service = OrderService(settings, wata, db, ggp, ton_scanner)
+    service = OrderService(
+        settings, wata, db, ggp, ton_scanner, TonRates(session), FragmentTonRate(session)
+    )
     referral = ReferralService(settings, db)
     partner = PartnerService(settings, db)
     verifier = SignatureVerifier(settings.wata_public_key_url, session)

@@ -13,9 +13,10 @@ from app.ggp.models import BuyResult, StarsPrice
 
 
 def test_parse_stars_price() -> None:
-    price = StarsPrice.from_api({"ton": 0.4636, "rub": 55.06848})
-    assert price.ton == Decimal("0.4636")
-    assert price.rub == Decimal("55.06848")
+    price = StarsPrice.from_api({"ton": 0.7525, "rub": 89.5475})
+    assert price.usd == Decimal("0.7525")
+    assert price.quoted_rub == Decimal("89.5475")
+    assert not hasattr(price, "ton")
 
 
 def test_parse_buy_result_variants() -> None:

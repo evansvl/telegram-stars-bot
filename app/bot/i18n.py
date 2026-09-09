@@ -184,6 +184,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "💎 Криптой (TON): <b>{ton} TON</b>",
         "en": "💎 Crypto (TON): <b>{ton} TON</b>",
     },
+    "crypto_rub_estimate": {
+        "ru": " (≈ {rub} ₽)",
+        "en": " (≈ {rub} ₽)",
+    },
     "quote_footer": {
         "ru": "Выберите способ оплаты.",
         "en": "Choose a payment method.",
@@ -301,8 +305,8 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
     },
     "star_rate_crypto": {
-        "ru": "💎 Курс: <b>1</b> ⭐ = <b>{rate} ₽</b> (оплата криптой TON)",
-        "en": "💎 Rate: <b>1</b> ⭐ = <b>{rate} ₽</b> (pay with TON crypto)",
+        "ru": "💎 Курс: <b>1</b> ⭐ ≈ <b>{rate} ₽</b> (оплата криптой TON)",
+        "en": "💎 Rate: <b>1</b> ⭐ ≈ <b>{rate} ₽</b> (pay with TON crypto)",
     },
     "crypto_unavailable": {
         "ru": "Оплата криптой временно недоступна. Попробуйте оплату картой.",

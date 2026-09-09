@@ -369,8 +369,16 @@ Your profit = `amount − price − commission` (the purchase price and WATA com
 come back in the order-creation response and are stored in the DB as `margin`).
 
 **TON via GGP** has its own markup and no WATA clamp. GGP returns a wholesale
-`{ton, rub}` price per quantity; the buyer pays
-`ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up. The buyer sends
+USD price under the legacy `ton` key (`0.7525` means $0.7525). The buyer pays
+`usd / usd_per_ton × (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`, rounded up.
+USD per TON comes from Fragment checkout's `tonRate`, refreshed every minute
+and rejected after five minutes without a successful refresh.
+The buyer-facing RUB estimate is that TON amount × the current TON/RUB rate from
+TonAPI, marked “≈”, excluding wallet fees. Rates refresh every five minutes;
+estimates are omitted after 15 minutes without fresh data. For accounting,
+GGP's RUB cost is also divided by USD per TON, and the payable RUB equivalent
+includes TON rounding. Old, unissued quotes require a new selection.
+The buyer sends
 TON to the GGP deposit address with the displayed memo. The bot matches the destination,
 exact amount, memo, and transaction time, then atomically reserves the unique tx hash
 for one order; only then does it call GGP `buyStars`. `get_ton_balance` is only a GGP

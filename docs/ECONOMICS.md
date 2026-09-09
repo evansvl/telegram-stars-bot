@@ -69,20 +69,32 @@ a partner and a referrer (see below).
 Crypto is a **second, parallel** payment method with its **own** markup
 (`CRYPTO_MARKUP_PERCENT`), independent of the WATA card rail:
 
-- The buyer pays in **TON**. GGP gives a wholesale price per quantity as
-  `{ton, rub}`; the buyer pays `ton * (1 + (CRYPTO_MARKUP_PERCENT + partner) / 100)`,
-  rounded up and then *jittered* by ±0.01 TON so each pending order has a unique
-  amount (that's how we identify who paid — everyone uses the same deposit address
-  and comment).
+- GGP's legacy `ton` JSON field contains **USD**, including its small fee:
+  `0.7525` for 50 stars means $0.7525. The model exposes it as `StarsPrice.usd`.
+  Divide by Fragment checkout's `tonRate` (USD per TON), then apply operator +
+  partner markup and round up to the configured TON step. Invoice uniqueness
+  adds only nanoton increments. Never invoice the raw USD value as TON.
+- The conversion rate refreshes every minute, expires after five minutes,
+  and is required for new quotes. Existing invoices retain their exact reserved
+  amounts for on-chain reconciliation; pre-fix unissued FSM quotes are rejected.
 - **No WATA +50% clamp here** — GGP has no such constraint, so the only ceiling on
   a partner's crypto markup is what you choose to allow.
 - WATA and GGP have independent wholesale prices, so a lower
   `CRYPTO_MARKUP_PERCENT` does not by itself guarantee a cheaper final price. The
   bot always keeps both configured rails available and shows their rates without
   claiming that crypto is necessarily cheaper.
-- Earnings use the **₽-equivalent** (`rub * markup`): the referral 5% and the
+- The GGP `rub` field uses the same unconverted numeric input: normalize the
+  purchase cost as `quoted_rub / usd_per_ton`. The provider's TON/RUB rate is
+  `quoted_rub / usd`; the payable RUB equivalent is `ton_due * provider_ton_rub`,
+  including commercial rounding. Earnings use this **₽-equivalent**: the referral 5% and the
   partner share (minus `PARTNER_COMMISSION_PERCENT`) work exactly as on the card
   rail, so the wallet/withdrawal math is currency-consistent.
+- Buyer-facing RUB estimates use the **rounded payable TON amount × current
+  TON/RUB market rate**, not GGP's separate `rub` field. TonAPI rates are used
+  only for display; accounting and payouts use the normalized provider values.
+  TON prices and FX refresh every five minutes; estimates older than 15 minutes
+  are omitted while payment in TON remains available. The menu includes the
+  partner markup, matching the purchase quote. RUB estimates exclude wallet fees.
 
 ## Recommendation
 

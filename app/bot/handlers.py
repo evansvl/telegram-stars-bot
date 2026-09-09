@@ -104,16 +104,22 @@ async def _home_view(
     user = event.from_user
     bot_id = event.bot.id if event.bot else 0
     text = t("welcome", lang)
+    owner = await partner.owner_of(bot_id)
+    partner_markup = float(await partner.partner_markup(bot_id)) if owner is not None else 0.0
     # No card rate in crypto-only mode (no WATA).
-    card_rate = await service.star_rate(service.markup_percent) if service.wata_enabled else None
-    crypto_rate = await service.crypto_star_rate()
+    card_rate = (
+        await service.star_rate(service.markup_percent + partner_markup)
+        if service.wata_enabled
+        else None
+    )
+    crypto_rate = await service.crypto_star_rate(service.crypto_markup_percent + partner_markup)
     if card_rate is not None and crypto_rate is not None:
         text += "\n\n" + t("star_rate_both", lang, card=card_rate, crypto=crypto_rate)
     elif crypto_rate is not None:
         text += "\n\n" + t("star_rate_crypto", lang, rate=crypto_rate)
     elif card_rate is not None:
         text += "\n\n" + t("star_rate", lang, rate=card_rate)
-    is_owner = user is not None and await partner.owner_of(bot_id) == user.id
+    is_owner = user is not None and owner == user.id
     is_admin = bool(
         user is not None
         and main_bot is not None
@@ -312,6 +318,7 @@ async def _show_quote(
         "crypto_rub_equiv": None,
         "crypto_rub_cost": None,
         "crypto_partner_earning": None,
+        "crypto_price_version": None,
     }
 
     # ── Card (WATA) ──
@@ -333,6 +340,7 @@ async def _show_quote(
 
     # ── Crypto (TON via GGP), best-effort ──
     crypto_ton: Decimal | None = None
+    crypto_display_rub: Decimal | None = None
     if service.crypto_enabled:
         crypto_operator = 0.0 if no_markup else service.crypto_markup_percent
         try:
@@ -346,7 +354,9 @@ async def _show_quote(
                 else Decimal("0")
             )
             crypto_ton = cq.ton_due
+            crypto_display_rub = cq.display_rub
             fsm.update(
+                crypto_price_version=2,
                 crypto_ton_due=str(cq.ton_due),
                 crypto_rub_equiv=str(cq.rub_equiv),
                 crypto_rub_cost=str(cq.rub_cost),
@@ -366,7 +376,10 @@ async def _show_quote(
     if card_amount is not None:
         lines.append(t("quote_line_card", lang, card=card_amount))
     if crypto_ton is not None:
-        lines.append(t("quote_line_crypto", lang, ton=crypto_ton))
+        line = t("quote_line_crypto", lang, ton=crypto_ton)
+        if crypto_display_rub is not None:
+            line += t("crypto_rub_estimate", lang, rub=crypto_display_rub)
+        lines.append(line)
     text = (
         t("quote_header", lang, target=target, count=count)
         + "\n\n"
@@ -526,6 +539,10 @@ async def cb_pay_crypto(
     ton_due = data.get("crypto_ton_due")
     rub_equiv = data.get("crypto_rub_equiv")
     rub_cost = data.get("crypto_rub_cost")
+    if data.get("crypto_price_version") != 2:
+        await call.answer(t("session_expired_alert", lang), show_alert=True)
+        await state.clear()
+        return
     if not (target and count and ton_due and rub_equiv) or not call.from_user:
         await call.answer(t("session_expired_alert", lang), show_alert=True)
         await state.clear()

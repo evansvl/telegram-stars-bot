@@ -25,7 +25,7 @@ class _ServiceStub:
     async def star_rate(self, _markup: float) -> Decimal:
         return Decimal("1.59")
 
-    async def crypto_star_rate(self) -> Decimal:
+    async def crypto_star_rate(self, _markup: float) -> Decimal:
         return Decimal("1.78")
 
     async def crypto_quote(self, _count: int, _markup: float) -> CryptoQuote:
@@ -73,7 +73,11 @@ async def test_home_shows_expensive_crypto_without_claiming_it_is_cheaper() -> N
     settings = SimpleNamespace(is_admin=lambda _tg_id: False)
 
     text, _keyboard = await _home_view(
-        event, _ServiceStub(), _PartnerStub(), settings, "en"  # type: ignore[arg-type]
+        event,
+        _ServiceStub(),
+        _PartnerStub(),
+        settings,
+        "en",  # type: ignore[arg-type]
     )
 
     assert "1.59" in text
@@ -87,12 +91,80 @@ async def test_quote_keeps_expensive_crypto_available_and_replaces_stale_fsm_val
     state = _StateStub()
 
     await _show_quote(
-        event, state, _ServiceStub(), _PartnerStub(), 50, "en"  # type: ignore[arg-type]
+        event,
+        state,
+        _ServiceStub(),
+        _PartnerStub(),
+        50,
+        "en",  # type: ignore[arg-type]
     )
 
     assert state.updated["card_amount"] == "79.50"
     assert state.updated["crypto_ton_due"] == "0.77"
     assert state.updated["crypto_rub_equiv"] == "89.00"
+    assert state.updated["crypto_price_version"] == 2
     assert len(event.answers) == 1
     assert "79.50" in event.answers[0][0]
     assert "0.77 TON" in event.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_quote_displays_market_estimate_separately_from_provider_accounting() -> None:
+    from unittest.mock import AsyncMock
+
+    service = _ServiceStub()
+    service.crypto_quote = AsyncMock(
+        return_value=CryptoQuote(
+            ton_cost=Decimal("0.50"),
+            rub_cost=Decimal("80.91"),
+            ton_due=Decimal("0.55"),
+            rub_equiv=Decimal("89.00"),
+            display_rub=Decimal("65.45"),
+        )
+    )
+    event, state = _EventStub(), _StateStub()
+    await _show_quote(event, state, service, _PartnerStub(), 50, "ru")
+    assert "≈ 65.45 ₽" in event.answers[0][0]
+    assert "89.00" not in event.answers[0][0]
+    assert "0.55 TON" in event.answers[0][0]
+    assert state.updated["crypto_rub_equiv"] == "89.00"
+
+
+@pytest.mark.asyncio
+async def test_home_includes_partner_markup_for_both_rates() -> None:
+    from unittest.mock import AsyncMock
+
+    partner = SimpleNamespace(
+        owner_of=AsyncMock(return_value=123),
+        partner_markup=AsyncMock(return_value=Decimal("15")),
+    )
+    service = _ServiceStub()
+    service.star_rate = AsyncMock(return_value=Decimal("1.79"))
+    service.crypto_star_rate = AsyncMock(return_value=Decimal("1.39"))
+    await _home_view(_EventStub(), service, partner, SimpleNamespace(), "ru")
+    service.star_rate.assert_awaited_once_with(35.0)
+    service.crypto_star_rate.assert_awaited_once_with(25.0)
+
+
+@pytest.mark.asyncio
+async def test_pre_conversion_fsm_quote_cannot_create_an_overpriced_invoice() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.bot.handlers import cb_pay_crypto
+
+    state = SimpleNamespace(
+        get_data=AsyncMock(
+            return_value={
+                "target_username": "recipient",
+                "count": 50,
+                "crypto_ton_due": "0.791",
+                "crypto_rub_equiv": "93.50",
+            }
+        ),
+        clear=AsyncMock(),
+    )
+    service = SimpleNamespace(create_crypto_order=AsyncMock())
+    call = SimpleNamespace(answer=AsyncMock())
+    await cb_pay_crypto(call, state, service, SimpleNamespace(), "ru")
+    state.clear.assert_awaited_once()
+    service.create_crypto_order.assert_not_awaited()

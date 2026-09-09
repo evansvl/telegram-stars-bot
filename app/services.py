@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
@@ -33,15 +34,16 @@ from app.db.repositories import (
 )
 from app.db.session import Database
 from app.ggp.client import GgpClient
-from app.ggp.errors import GgpApiError
+from app.ggp.errors import GgpApiError, GgpNetworkError
 from app.pricing import (
     PriceQuote,
     compute_amount,
     compute_ton_due,
-    crypto_rub_equiv,
     estimated_margin,
     jitter_ton_amount,
 )
+from app.ton.fragment_rate import FragmentTonRate
+from app.ton.rates import TonRates
 from app.ton.scanner import TonScanner
 from app.wata.client import WataClient
 from app.wata.models import OrderStatus, StarPrice
@@ -164,10 +166,11 @@ class CreatedOrder:
 class CryptoQuote:
     """A crypto (TON) quote for ``count`` stars at a given total markup."""
 
-    ton_cost: Decimal  # GGP wholesale TON price
-    rub_cost: Decimal  # GGP wholesale RUB price (basis for ₽ earnings)
+    ton_cost: Decimal  # GGP USD price converted to TON
+    rub_cost: Decimal  # normalized GGP RUB purchase cost (basis for ₽ earnings)
     ton_due: Decimal  # TON the buyer pays (markup applied, pre-jitter)
     rub_equiv: Decimal  # ₽-equivalent paid (for stats/referral)
+    display_rub: Decimal | None = None  # market estimate of ton_due, display only
 
 
 @dataclass(slots=True)
@@ -211,17 +214,21 @@ class OrderService:
         db: Database,
         ggp: GgpClient | None = None,
         ton_scanner: TonScanner | None = None,
+        ton_rates: TonRates | None = None,
+        fragment_rate: FragmentTonRate | None = None,
     ) -> None:
         self._settings = settings
         self._wata = wata
         self._ggp = ggp
         self._ton_scanner = ton_scanner
+        self._ton_rates = ton_rates
+        self._fragment_rate = fragment_rate
         self._db = db
         self._lang_cache: dict[int, str] = {}
         self._banned_cache: dict[int, bool] = {}
         self._rate_min_price: Decimal | None = None
         self._rate_fetched_at: float = 0.0
-        self._ggp_rub_50: Decimal | None = None
+        self._ggp_usd_50: Decimal | None = None
         self._ggp_fetched_at: float = 0.0
 
     def is_admin(self, tg_id: int) -> bool:
@@ -270,7 +277,7 @@ class OrderService:
         async with self._db.session() as session:
             return await OrderRepository(session).period_stats(days)
 
-    # ── Displayed star rate (cached ~1h) ─────────────────────────
+    # ── Displayed star rates (card: 1h, crypto: 5min) ────────────
 
     async def _reference_min_price(self) -> Decimal | None:
         """Cached minPrice from the reference username; refreshed at most hourly."""
@@ -298,48 +305,68 @@ class OrderService:
         quote = compute_amount(min_price, 50, markup_percent)
         return (quote.amount / 50).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    async def _reference_ggp_rub(self) -> Decimal | None:
-        """Cached GGP RUB price for 50 stars; refreshed at most hourly."""
+    async def _reference_ggp_usd(self) -> Decimal | None:
+        """Cached GGP USD price for 50 stars, refreshed every five minutes."""
         if self._ggp is None:
             return None
-        fresh = (time.monotonic() - self._ggp_fetched_at) < 3600
-        if self._ggp_rub_50 is not None and fresh:
-            return self._ggp_rub_50
+        fresh = (time.monotonic() - self._ggp_fetched_at) < 300
+        if self._ggp_usd_50 is not None and fresh:
+            return self._ggp_usd_50
         try:
             price = await self._ggp.get_stars_price(50)
         except Exception:
             logger.warning("failed to refresh GGP rate; keeping cached value")
-            return self._ggp_rub_50
-        self._ggp_rub_50 = price.rub
+            return self._ggp_usd_50
+        self._ggp_usd_50 = price.usd
         self._ggp_fetched_at = time.monotonic()
-        return self._ggp_rub_50
+        return self._ggp_usd_50
 
-    async def crypto_star_rate(self) -> Decimal | None:
-        """Per-star ₽-equivalent on the crypto rail (GGP price + crypto markup).
+    async def crypto_star_rate(self, markup_percent: float | None = None) -> Decimal | None:
+        """Market RUB estimate of the actual rounded TON quote per star.
 
         Cache-only, like ``star_rate`` — GGP can be slow (retries), so the menu must
         never await it. ``refresh_rates`` (background) keeps the value warm.
         """
         if not self.crypto_enabled:
             return None
-        rub = self._ggp_rub_50
+        usd = self._ggp_usd_50
+        rate = self._fragment_rate.usd if self._fragment_rate is not None else None
+        if usd is None or rate is None or time.monotonic() - self._ggp_fetched_at >= 900:
+            return None
+        ton = usd / rate
+        markup = self.crypto_markup_percent if markup_percent is None else markup_percent
+        due = compute_ton_due(ton, markup, step=self._settings.ton_amount_jitter_step)
+        rub = self.crypto_display_rub(due)
         if rub is None:
             return None
-        per_star = crypto_rub_equiv(rub, self.crypto_markup_percent) / 50
+        per_star = rub / 50
         return per_star.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def crypto_display_rub(self, ton_amount: Decimal) -> Decimal | None:
+        """Display estimate only; provider RUB accounting remains independent."""
+        rate = self._ton_rates.rub if self._ton_rates is not None else None
+        if rate is None:
+            return None
+        return (ton_amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     async def refresh_rates(self) -> None:
         """Fetch/refresh the displayed star-rate caches (WATA + GGP).
 
         Called once at startup and then periodically by a background task, so the
         menu always reads a warm cache instead of blocking a handler on a slow API.
-        The underlying getters no-op when the cache is still fresh (~1h) and keep
-        the last good value on failure.
+        Card prices refresh hourly, TON prices and market FX every five minutes.
+        Crypto estimates stop displaying after 15 minutes without fresh data.
         """
+        refreshes: list[Coroutine[Any, Any, object]] = []
         if self.wata_enabled:
-            await self._reference_min_price()
+            refreshes.append(self._reference_min_price())
         if self.crypto_enabled:
-            await self._reference_ggp_rub()
+            refreshes.append(self._reference_ggp_usd())
+            if self._ton_rates is not None:
+                refreshes.append(self._ton_rates.refresh())
+            if self._fragment_rate is not None:
+                refreshes.append(self._fragment_rate.get())
+        await asyncio.gather(*refreshes)
 
     @property
     def markup_percent(self) -> float:
@@ -511,14 +538,26 @@ class OrderService:
     # ── Crypto rail (TON via GreenGamePay) ───────────────────────
 
     async def crypto_quote(self, count: int, total_markup_percent: float) -> CryptoQuote:
-        """Wholesale GGP price for ``count`` stars + our markup (TON the buyer pays)."""
+        """Convert GGP USD to TON before applying markup and commercial rounding."""
         assert self._ggp is not None, "crypto rail not configured"
+        if self._fragment_rate is None:
+            raise GgpNetworkError("USD/TON conversion rate not configured")
         price = await self._ggp.get_stars_price(count)
+        usd_per_ton = await self._fragment_rate.get()
+        ton_cost = price.usd / usd_per_ton
         step = self._settings.ton_amount_jitter_step
-        ton_due = compute_ton_due(price.ton, total_markup_percent, step=step)
-        rub_equiv = crypto_rub_equiv(price.rub, total_markup_percent)
+        ton_due = compute_ton_due(ton_cost, total_markup_percent, step=step)
+        rub_cost = price.quoted_rub / usd_per_ton
+        provider_ton_rub = price.quoted_rub / price.usd
+        rub_equiv = (ton_due * provider_ton_rub).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
         return CryptoQuote(
-            ton_cost=price.ton, rub_cost=price.rub, ton_due=ton_due, rub_equiv=rub_equiv
+            ton_cost=ton_cost,
+            rub_cost=rub_cost,
+            ton_due=ton_due,
+            rub_equiv=rub_equiv,
+            display_rub=self.crypto_display_rub(ton_due),
         )
 
     async def create_crypto_order(
