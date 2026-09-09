@@ -2,6 +2,11 @@ name: Publish release
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - '.github/releases/**'
+      - '.github/workflows/release.yml'
     tags:
       - 'v*'
 
@@ -21,10 +26,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
         shell: bash
         run: |
           set -euo pipefail
+          if test -z "$RELEASE_TAG"; then
+            RELEASE_TAG="v$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            exit 0
+          fi
           notes=".github/releases/${RELEASE_TAG}.md"
           test -s "$notes"
           title="$(head -n 1 "$notes")"
